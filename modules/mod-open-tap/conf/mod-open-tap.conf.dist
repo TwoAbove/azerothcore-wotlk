@@ -1,0 +1,15 @@
+#
+# mod-open-tap
+#
+
+[worldserver]
+
+########################################
+# OpenTap.Enable
+#     Description: Grant quest kill credit to every player who damages a
+#                  creature and remains within reward distance when it dies.
+#                  Loot, XP, and reputation remain first-tap behavior.
+#     Default:     1 - (Enabled)
+#                  0 - (Disabled)
+
+OpenTap.Enable = 1
