@@ -1,0 +1,14 @@
+#
+# mod-account-taxi
+#
+
+[worldserver]
+
+########################################
+# AccountTaxi.Enable
+# Description: On login, share discovered flight paths among all characters
+# on the same account and faction. Cross-faction paths remain separate.
+# Default: 1 - (Enabled)
+# 0 - (Disabled)
+
+AccountTaxi.Enable = 1
