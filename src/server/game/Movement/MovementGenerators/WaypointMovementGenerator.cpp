@@ -682,7 +682,6 @@ void FlightPathMovementGenerator::DoFinalize(Player* player)
     player->RemovePlayerFlag(PLAYER_FLAGS_TAXI_BENCHMARK);
 }
 
-#define PLAYER_FLIGHT_SPEED 32.0f
 
 void FlightPathMovementGenerator::DoReset(Player* player)
 {
@@ -711,7 +710,7 @@ void FlightPathMovementGenerator::DoReset(Player* player)
     }
     init.SetFirstPointId(GetCurrentNode());
     init.SetFly();
-    init.SetVelocity(PLAYER_FLIGHT_SPEED);
+    init.SetVelocity(sWorld->getFloatConfig(CONFIG_FLIGHT_PATH_SPEED));
     init.Launch();
 }
 

@@ -1665,6 +1665,23 @@ AllFlightPaths = 0
 InstantFlightPaths = 0
 
 #
+#    FlightPathSpeed
+#        Description: Flight path movement speed in yards per second.
+#        Default:     32.0
+
+FlightPathSpeed = 32.0
+
+#
+#    SmoothSplineSpeedLimit
+#        Description: Maximum server-driven smooth spline speed in yards per second.
+#                     This value must match the client executable's limit. The stock
+#                     3.3.5a client limit is 50. Values above 50 require a matching
+#                     client patch; a mismatch causes movement desynchronization.
+#        Default:     50.0
+
+SmoothSplineSpeedLimit = 50.0
+
+#
 #    AlwaysMaxSkillForLevel
 #        Description: Players will automatically gain max skill level when logging in or leveling
 #                     up.
