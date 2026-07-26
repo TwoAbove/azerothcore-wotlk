@@ -28,3 +28,6 @@
 
 # Ignore sql/* files
 data/sql/*    linguist-documentation
+*.webp binary
+*.blp binary
+*.pyc binary
