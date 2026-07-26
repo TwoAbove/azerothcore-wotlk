@@ -18,12 +18,20 @@
 #ifndef SCRIPT_OBJECT_ALL_ITEM_SCRIPT_H_
 #define SCRIPT_OBJECT_ALL_ITEM_SCRIPT_H_
 
+#include "Define.h"
 #include "ScriptObject.h"
+#include <vector>
+
+enum ItemHook
+{
+    ITEMHOOK_ON_ITEM_BONUS_SEED_GENERATE,
+    ITEMHOOK_END
+};
 
 class AllItemScript : public ScriptObject
 {
 protected:
-    AllItemScript(char const* name);
+    AllItemScript(const char* name, std::vector<uint16> enabledHooks = std::vector<uint16>());
 
 public:
     // Called when a player accepts a quest from the item.
@@ -37,6 +45,8 @@ public:
 
     // Called when the item expires (is destroyed).
     [[nodiscard]] virtual bool CanItemExpire(Player* /*player*/, ItemTemplate const* /*proto*/) { return true; }
+
+    virtual void OnItemBonusSeedGenerate(ItemTemplate const* /*proto*/, uint32 /*entropy*/, uint32& /*bonusSeed*/) { }
 
     // Called when a player selects an option in an item gossip window
     virtual void OnItemGossipSelect(Player* /*player*/, Item* /*item*/, uint32 /*sender*/, uint32 /*action*/) { }

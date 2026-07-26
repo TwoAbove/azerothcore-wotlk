@@ -588,24 +588,21 @@ inline std::string GenerateWhereStr(std::string const& field, SetType<T, Rest...
     return whereStr.str();
 }
 
-// Writing - High-level functions
-void PlayerDumpWriter::PopulateGuids(ObjectGuid::LowType guid)
+struct RelatedGuids
 {
+    std::set<ObjectGuid::LowType> pets;
+    std::set<ObjectGuid::LowType> mails;
+    std::set<ObjectGuid::LowType> items;
+    std::set<uint64> itemSets;
+};
+
+RelatedGuids CollectRelatedGuids(ObjectGuid::LowType guid)
+{
+    RelatedGuids guids;
     for (BaseTable const& baseTable : BaseTables)
     {
-        switch (baseTable.StoredType)
-        {
-        case GUID_TYPE_ITEM:
-        case GUID_TYPE_MAIL:
-        case GUID_TYPE_PET:
-        case GUID_TYPE_EQUIPMENT_SET:
-            break;
-        default:
-            return;
-        }
-
-        std::string whereStr = GenerateWhereStr(baseTable.PlayerGuid, guid);
-        QueryResult result = CharacterDatabase.Query("SELECT {} FROM {} WHERE {}", baseTable.PrimaryKey, baseTable.TableName, whereStr);
+        QueryResult result = CharacterDatabase.Query("SELECT {} FROM {} WHERE {}",
+            baseTable.PrimaryKey, baseTable.TableName, GenerateWhereStr(baseTable.PlayerGuid, guid));
         if (!result)
             continue;
 
@@ -613,27 +610,103 @@ void PlayerDumpWriter::PopulateGuids(ObjectGuid::LowType guid)
         {
             switch (baseTable.StoredType)
             {
-            case GUID_TYPE_ITEM:
-                if (ObjectGuid::LowType itemLowGuid = (*result)[0].Get<uint32>())
-                    _items.insert(itemLowGuid);
-                break;
-            case GUID_TYPE_MAIL:
-                if (ObjectGuid::LowType mailLowGuid = (*result)[0].Get<uint32>())
-                    _mails.insert(mailLowGuid);
-                break;
-            case GUID_TYPE_PET:
-                if (ObjectGuid::LowType petLowGuid = (*result)[0].Get<uint32>())
-                    _pets.insert(petLowGuid);
-                break;
-            case GUID_TYPE_EQUIPMENT_SET:
-                if (uint64 eqSetId = (*result)[0].Get<uint64>())
-                    _itemSets.insert(eqSetId);
-                break;
-            default:
-                break;
+                case GUID_TYPE_ITEM:
+                    if (ObjectGuid::LowType id = (*result)[0].Get<uint32>())
+                        guids.items.insert(id);
+                    break;
+                case GUID_TYPE_MAIL:
+                    if (ObjectGuid::LowType id = (*result)[0].Get<uint32>())
+                        guids.mails.insert(id);
+                    break;
+                case GUID_TYPE_PET:
+                    if (ObjectGuid::LowType id = (*result)[0].Get<uint32>())
+                        guids.pets.insert(id);
+                    break;
+                case GUID_TYPE_EQUIPMENT_SET:
+                    if (uint64 id = (*result)[0].Get<uint64>())
+                        guids.itemSets.insert(id);
+                    break;
+                default:
+                    break;
             }
         } while (result->NextRow());
     }
+    return guids;
+}
+
+void AppendDumpTableDeletes(CharacterDatabaseTransaction transaction, ObjectGuid::LowType guid)
+{
+    RelatedGuids guids = CollectRelatedGuids(guid);
+    for (uint32 index = DUMP_TABLE_COUNT; index-- > 0;)
+    {
+        DumpTable const& dumpTable = DumpTables[index];
+        TableStruct const& table = CharacterTables[index];
+        std::string where;
+        switch (dumpTable.Type)
+        {
+            case DTT_ITEM:
+            case DTT_ITEM_GIFT:
+                if (guids.items.empty())
+                    continue;
+                where = GenerateWhereStr(table.WhereFieldName, guids.items);
+                break;
+            case DTT_PET_TABLE:
+                if (guids.pets.empty())
+                    continue;
+                where = GenerateWhereStr(table.WhereFieldName, guids.pets);
+                break;
+            case DTT_MAIL_ITEM:
+                if (guids.mails.empty())
+                    continue;
+                where = GenerateWhereStr(table.WhereFieldName, guids.mails);
+                break;
+            case DTT_EQSET_TABLE:
+                if (guids.itemSets.empty())
+                    continue;
+                where = GenerateWhereStr(table.WhereFieldName, guids.itemSets);
+                break;
+            default:
+                where = GenerateWhereStr(table.WhereFieldName, guid);
+                break;
+        }
+
+        std::string query = "DELETE FROM `" + table.TableName + "` WHERE " + where;
+        transaction->Append(query.c_str());
+    }
+}
+
+bool IsSafeReplacementTarget(uint32 account, std::string const& name, ObjectGuid::LowType guid)
+{
+    CharacterDatabasePreparedStatement* statement =
+        CharacterDatabase.GetPreparedStatement(CHAR_SEL_DATA_BY_GUID);
+    statement->SetData(0, guid);
+    if (PreparedQueryResult result = CharacterDatabase.Query(statement))
+    {
+        Field* fields = result->Fetch();
+        if (fields[1].Get<uint32>() != account || fields[2].Get<std::string>() != name)
+            return false;
+    }
+
+    statement = CharacterDatabase.GetPreparedStatement(CHAR_SEL_DATA_BY_NAME);
+    statement->SetData(0, name);
+    if (PreparedQueryResult result = CharacterDatabase.Query(statement))
+    {
+        Field* fields = result->Fetch();
+        if (fields[0].Get<ObjectGuid::LowType>() != guid || fields[1].Get<uint32>() != account)
+            return false;
+    }
+
+    return true;
+}
+
+// Writing - High-level functions
+void PlayerDumpWriter::PopulateGuids(ObjectGuid::LowType guid)
+{
+    RelatedGuids guids = CollectRelatedGuids(guid);
+    _pets = std::move(guids.pets);
+    _mails = std::move(guids.mails);
+    _items = std::move(guids.items);
+    _itemSets = std::move(guids.itemSets);
 }
 
 bool PlayerDumpWriter::AppendTable(StringTransaction& trans, ObjectGuid::LowType guid, TableStruct const& tableStruct, DumpTable const& dumpTable)
@@ -761,34 +834,44 @@ inline void FixNULLfields(std::string& line)
     }
 }
 
-DumpReturn PlayerDumpReader::LoadDump(std::istream& input, uint32 account, std::string name, ObjectGuid::LowType guid)
+DumpReturn PlayerDumpReader::LoadDump(std::istream& input, uint32 account, std::string name,
+    ObjectGuid::LowType guid, bool synchronous, bool preserveGuids, bool replaceExisting,
+    DumpTransactionExtension const& transactionExtension)
 {
+    if (replaceExisting && (!guid || !synchronous || !preserveGuids))
+        return DUMP_FILE_BROKEN;
+
     uint32 charcount = AccountMgr::GetCharactersCount(account);
-    if (charcount >= 10)
+    if (!replaceExisting && charcount >= 10)
         return DUMP_TOO_MANY_CHARS;
 
     std::string newguid, chraccount;
 
     // make sure the same guid doesn't already exist and is safe to use
-    bool incHighest = true;
-    if (guid && guid < sObjectMgr->GetGenerator<HighGuid::Player>().GetNextAfterMaxUsed())
+    bool incHighest = !replaceExisting;
+    if (!replaceExisting)
     {
-        CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_SEL_CHECK_GUID);
-        stmt->SetData(0, guid);
+        if (guid && guid < sObjectMgr->GetGenerator<HighGuid::Player>().GetNextAfterMaxUsed())
+        {
+            CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_SEL_CHECK_GUID);
+            stmt->SetData(0, guid);
 
-        if (PreparedQueryResult result = CharacterDatabase.Query(stmt))
-            guid = sObjectMgr->GetGenerator<HighGuid::Player>().GetNextAfterMaxUsed();                     // use first free if exists
+            if (PreparedQueryResult result = CharacterDatabase.Query(stmt))
+                guid = sObjectMgr->GetGenerator<HighGuid::Player>().GetNextAfterMaxUsed();
+            else
+                incHighest = false;
+        }
         else
-            incHighest = false;
+            guid = sObjectMgr->GetGenerator<HighGuid::Player>().GetNextAfterMaxUsed();
     }
-    else
-        guid = sObjectMgr->GetGenerator<HighGuid::Player>().GetNextAfterMaxUsed();
 
     // normalize the name if specified and check if it exists
     if (!normalizePlayerName(name))
         name.clear();
 
-    if (ObjectMgr::CheckPlayerName(name, true) == CHAR_NAME_SUCCESS)
+    if (ObjectMgr::CheckPlayerName(name, true) != CHAR_NAME_SUCCESS)
+        name.clear();
+    else if (!replaceExisting)
     {
         CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_SEL_CHECK_NAME);
         stmt->SetData(0, name);
@@ -796,8 +879,12 @@ DumpReturn PlayerDumpReader::LoadDump(std::istream& input, uint32 account, std::
         if (PreparedQueryResult result = CharacterDatabase.Query(stmt))
             name.clear();                                       // use the one from the dump
     }
-    else
-        name.clear();
+
+    if (replaceExisting && (name.empty() || !IsSafeReplacementTarget(account, name, guid)))
+    {
+        LOG_ERROR("misc", "LoadPlayerDump: refusing to replace character {} because its GUID, account, and name do not match", guid);
+        return DUMP_FILE_BROKEN;
+    }
 
     // name encoded or empty
     newguid = std::to_string(guid);
@@ -826,6 +913,8 @@ DumpReturn PlayerDumpReader::LoadDump(std::istream& input, uint32 account, std::
     std::size_t lineNumber = 0;
 
     CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
+    if (replaceExisting)
+        AppendDumpTableDeletes(trans, guid);
     while (std::getline(input, line))
     {
         ++lineNumber;
@@ -838,6 +927,10 @@ DumpReturn PlayerDumpReader::LoadDump(std::istream& input, uint32 account, std::
         // skip the important notes
         static std::string const SkippedLine = "IMPORTANT NOTE:";
         if (line.substr(nw_pos, SkippedLine.size()) == SkippedLine)
+            continue;
+
+        static std::string const SnapshotLine = "TEST HARNESS SNAPSHOT ";
+        if (line.substr(nw_pos, SnapshotLine.size()) == SnapshotLine)
             continue;
 
         // determine table name and load type
@@ -886,19 +979,19 @@ DumpReturn PlayerDumpReader::LoadDump(std::istream& input, uint32 account, std::
                     return DUMP_FILE_BROKEN;
                 break;
             case GUID_TYPE_PET:
-                if (!ChangeGuid(ts, line, field.FieldName, petIds, petLowGuidOffset))
+                if (!preserveGuids && !ChangeGuid(ts, line, field.FieldName, petIds, petLowGuidOffset))
                     return DUMP_FILE_BROKEN;
                 break;
             case GUID_TYPE_MAIL:
-                if (!ChangeGuid(ts, line, field.FieldName, mails, mailLowGuidOffset))
+                if (!preserveGuids && !ChangeGuid(ts, line, field.FieldName, mails, mailLowGuidOffset))
                     return DUMP_FILE_BROKEN;
                 break;
             case GUID_TYPE_ITEM:
-                if (!ChangeGuid(ts, line, field.FieldName, items, itemLowGuidOffset, true))
+                if (!preserveGuids && !ChangeGuid(ts, line, field.FieldName, items, itemLowGuidOffset, true))
                     return DUMP_FILE_BROKEN;
                 break;
             case GUID_TYPE_EQUIPMENT_SET:
-                if (!ChangeGuid(ts, line, field.FieldName, equipmentSetIds, equipmentSetGuidOffset))
+                if (!preserveGuids && !ChangeGuid(ts, line, field.FieldName, equipmentSetIds, equipmentSetGuidOffset))
                     return DUMP_FILE_BROKEN;
                 break;
             case GUID_TYPE_NULL:
@@ -949,11 +1042,21 @@ DumpReturn PlayerDumpReader::LoadDump(std::istream& input, uint32 account, std::
 
     if (input.fail() && !input.eof())
         return DUMP_FILE_BROKEN;
+    if (transactionExtension && !transactionExtension(trans))
+        return DUMP_FILE_BROKEN;
 
-    CharacterDatabase.CommitTransaction(trans);
+
+    if (synchronous)
+    {
+        if (!CharacterDatabase.AsyncCommitTransaction(trans).m_future.get())
+            return DUMP_FILE_BROKEN;
+    }
+    else
+        CharacterDatabase.CommitTransaction(trans);
 
     // in case of name conflict player has to rename at login anyway
-    sCharacterCache->AddCharacterCacheEntry(ObjectGuid(HighGuid::Player, guid), account, name, gender, race, playerClass, level);
+    if (!replaceExisting)
+        sCharacterCache->AddCharacterCacheEntry(ObjectGuid(HighGuid::Player, guid), account, name, gender, race, playerClass, level);
 
     sObjectMgr->GetGenerator<HighGuid::Item>().Set(sObjectMgr->GetGenerator<HighGuid::Item>().GetNextAfterMaxUsed() + items.size());
     sObjectMgr->_mailId += mails.size();
@@ -971,13 +1074,15 @@ DumpReturn PlayerDumpReader::LoadDump(std::istream& input, uint32 account, std::
 DumpReturn PlayerDumpReader::LoadDumpFromString(std::string const& dump, uint32 account, std::string name, ObjectGuid::LowType guid)
 {
     std::istringstream input(dump);
-    return LoadDump(input, account, name, guid);
+    return LoadDump(input, account, name, guid, false, false, false, {});
 }
 
-DumpReturn PlayerDumpReader::LoadDumpFromFile(std::string const& file, uint32 account, std::string name, ObjectGuid::LowType guid)
+DumpReturn PlayerDumpReader::LoadDumpFromFile(std::string const& file, uint32 account,
+    std::string name, ObjectGuid::LowType guid, bool synchronous, bool preserveGuids,
+    bool replaceExisting, DumpTransactionExtension const& transactionExtension)
 {
     std::ifstream input(file);
     if (!input)
         return DUMP_FILE_OPEN_ERROR;
-    return LoadDump(input, account, name, guid);
+    return LoadDump(input, account, name, guid, synchronous, preserveGuids, replaceExisting, transactionExtension);
 }

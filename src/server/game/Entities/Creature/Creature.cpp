@@ -420,6 +420,8 @@ void Creature::RemoveCorpse(bool setSpawnTime, bool skipVisibility)
     if (getDeathState() != DeathState::Corpse)
         return;
 
+    sScriptMgr->OnBeforeCreatureRemoveCorpse(this);
+
     if (_respawnCompatibilityMode)
     {
         m_corpseRemoveTime = GameTime::GetGameTime().count();
@@ -1492,7 +1494,7 @@ void Creature::SaveToDB(uint32 mapid, uint8 spawnMask, uint32 phaseMask)
     sScriptMgr->OnCreatureSaveToDB(this);
 }
 
-void Creature::SelectLevel(bool changelevel)
+void Creature::SelectLevel(bool changelevel, uint8 forcedLevel)
 {
     CreatureTemplate const* cInfo = GetCreatureTemplate();
 
@@ -1501,9 +1503,10 @@ void Creature::SelectLevel(bool changelevel)
     // level
     uint8 minlevel = std::min(cInfo->maxlevel, cInfo->minlevel);
     uint8 maxlevel = std::max(cInfo->maxlevel, cInfo->minlevel);
-    uint8 level = minlevel == maxlevel ? minlevel : urand(minlevel, maxlevel);
+    uint8 level = forcedLevel ? forcedLevel : (minlevel == maxlevel ? minlevel : urand(minlevel, maxlevel));
 
-    sScriptMgr->OnBeforeCreatureSelectLevel(cInfo, this, level);
+    if (!forcedLevel)
+        sScriptMgr->OnBeforeCreatureSelectLevel(cInfo, this, level);
 
     if (changelevel)
         SetLevel(level);
@@ -1552,7 +1555,8 @@ void Creature::SelectLevel(bool changelevel)
     SetStatFlatModifier(UNIT_MOD_ATTACK_POWER, BASE_VALUE, stats->AttackPower);
     SetStatFlatModifier(UNIT_MOD_ATTACK_POWER_RANGED, BASE_VALUE, stats->RangedAttackPower);
 
-    sScriptMgr->OnCreatureSelectLevel(cInfo, this);
+    if (!forcedLevel)
+        sScriptMgr->OnCreatureSelectLevel(cInfo, this);
 }
 
 float Creature::_GetHealthMod(int32 Rank)

@@ -63,7 +63,7 @@ public:
 
     bool Create(ObjectGuid::LowType guidlow, Map* map, uint32 phaseMask, uint32 Entry, uint32 vehId, float x, float y, float z, float ang, CreatureData const* data = nullptr);
     bool LoadCreaturesAddon(bool reload = false);
-    void SelectLevel(bool changelevel = true);
+    void SelectLevel(bool changelevel = true, uint8 forcedLevel = 0);
     void LoadEquipment(int8 id = 1, bool force = false);
 
     [[nodiscard]] ObjectGuid::LowType GetSpawnId() const { return m_spawnId; }

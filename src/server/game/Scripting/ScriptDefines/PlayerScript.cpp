@@ -137,6 +137,13 @@ void ScriptMgr::OnPlayerBeforeSendLoot(Player* player, ObjectGuid lootGuid, Loot
     CALL_ENABLED_HOOKS(PlayerScript, PLAYERHOOK_ON_BEFORE_SEND_LOOT, script->OnPlayerBeforeSendLoot(player, lootGuid, loot));
 }
 
+void ScriptMgr::OnPlayerAfterSendAuctionList(Player* player, uint8 listType,
+    std::vector<uint32> const& itemBonusSeeds)
+{
+    CALL_ENABLED_HOOKS(PlayerScript, PLAYERHOOK_ON_AFTER_SEND_AUCTION_LIST,
+        script->OnPlayerAfterSendAuctionList(player, listType, itemBonusSeeds));
+}
+
 void ScriptMgr::OnPlayerGiveXP(Player* player, uint32& amount, Unit* victim, uint8 xpSource)
 {
     CALL_ENABLED_HOOKS(PlayerScript, PLAYERHOOK_ON_GIVE_EXP, script->OnPlayerGiveXP(player, amount, victim, xpSource));
@@ -446,6 +453,28 @@ void ScriptMgr::OnPlayerAfterGuardianInitStatsForLevel(Player* player, Guardian*
 void ScriptMgr::OnPlayerBeforeLoadPetFromDB(Player* player, uint32& petentry, uint32& petnumber, bool& current, bool& forceLoadFromDB)
 {
     CALL_ENABLED_HOOKS(PlayerScript, PLAYERHOOK_ON_BEFORE_LOAD_PET_FROM_DB, script->OnPlayerBeforeLoadPetFromDB(player, petentry, petnumber, current, forceLoadFromDB));
+}
+
+void ScriptMgr::OnPlayerEnvironmentalDamage(Player* player, uint8 type, uint32& damage)
+{
+    CALL_ENABLED_HOOKS(PlayerScript, PLAYERHOOK_ON_ENVIRONMENTAL_DAMAGE, script->OnPlayerEnvironmentalDamage(player, type, damage));
+}
+
+bool ScriptMgr::CanItemLoseDurability(Player* player, Item* item)
+{
+    CALL_ENABLED_BOOLEAN_HOOKS(PlayerScript, PLAYERHOOK_CAN_ITEM_LOSE_DURABILITY, !script->CanItemLoseDurability(player, item));
+}
+
+bool ScriptMgr::CanAttackWhileMounted(Player* player, Unit* victim, bool meleeAttack)
+{
+    CALL_ENABLED_BOOLEAN_HOOKS_WITH_DEFAULT_FALSE(PlayerScript, PLAYERHOOK_CAN_ATTACK_WHILE_MOUNTED,
+        script->CanAttackWhileMounted(player, victim, meleeAttack));
+}
+
+bool ScriptMgr::CanUseGameObjectWhileMounted(Player* player, GameObject* gameObject)
+{
+    CALL_ENABLED_BOOLEAN_HOOKS_WITH_DEFAULT_FALSE(PlayerScript, PLAYERHOOK_CAN_USE_GAMEOBJECT_WHILE_MOUNTED,
+        script->CanUseGameObjectWhileMounted(player, gameObject));
 }
 
 void ScriptMgr::OnPlayerBeforeBuyItemFromVendor(Player* player, ObjectGuid vendorguid, uint32 vendorslot, uint32& item, uint8 count, uint8 bag, uint8 slot)

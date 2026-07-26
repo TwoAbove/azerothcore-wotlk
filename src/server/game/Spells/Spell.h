@@ -463,6 +463,7 @@ public:
     void _cast(bool skipCheck);
     void finish(bool ok = true);
     void TakePower();
+    void CalculatePowerCost();
     void TakeAmmo();
 
     void TakeRunePower(bool didHit);
@@ -592,6 +593,7 @@ public:
     Unit* GetOriginalTarget() const;
     SpellInfo const* GetSpellInfo() const { return m_spellInfo; }
     int32 GetPowerCost() const { return m_powerCost; }
+    int32 GetPowerCostBeforeScripts() const { return _powerCostBeforeScripts; }
 
     bool UpdatePointers();                              // must be used at call Spell code after time delay (non triggered spell cast/update spell call/etc)
 
@@ -606,6 +608,7 @@ public:
 
     [[nodiscard]] uint32 GetTriggeredByAuraTickNumber() const { return m_triggeredByAuraSpell.tickNumber; }
     [[nodiscard]] SpellInfo const* GetTriggeredByAuraSpellInfo() const { return m_triggeredByAuraSpell.spellInfo; }
+    [[nodiscard]] Aura* GetCreatedAura() const { return m_spellAura; }
 
     [[nodiscard]] TriggerCastFlags GetTriggeredCastFlags() const { return _triggeredCastFlags; }
 
@@ -636,6 +639,7 @@ public:
     SpellSchoolMask m_spellSchoolMask;                  // Spell school (can be overwrite for some spells (wand shoot for example)
     WeaponAttackType m_attackType;                      // For weapon based attack
     int32 m_powerCost;                                  // Calculated spell cost     initialized only in Spell::prepare
+    int32 _powerCostBeforeScripts;                     // Cost before AllSpellScript adjustments
     int32 m_casttime;                                   // Calculated spell cast time initialized only in Spell::prepare
     int32 m_channeledDuration;                          // Calculated channeled spell duration in order to calculate correct pushback.
     bool m_canReflect;                                  // can reflect this spell?

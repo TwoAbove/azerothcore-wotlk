@@ -24,9 +24,28 @@ void ScriptMgr::OnCalcMaxDuration(Aura const* aura, int32& maxDuration)
     CALL_ENABLED_HOOKS(AllSpellScript, ALLSPELLHOOK_ON_CALC_MAX_DURATION, script->OnCalcMaxDuration(aura, maxDuration));
 }
 
+void ScriptMgr::OnCalcCritChance(Spell* spell, Unit* target, float& critChance)
+{
+    CALL_ENABLED_HOOKS(AllSpellScript, ALLSPELLHOOK_ON_CALC_CRIT_CHANCE, script->OnCalcCritChance(spell, target, critChance));
+}
+
+void ScriptMgr::OnCalcPeriodicCritChance(SpellInfo const* spellInfo, Unit const* caster,
+    Unit const* target, float& critChance)
+{
+    CALL_ENABLED_HOOKS(AllSpellScript, ALLSPELLHOOK_ON_CALC_PERIODIC_CRIT_CHANCE,
+        script->OnCalcPeriodicCritChance(spellInfo, caster, target, critChance));
+}
+
 void ScriptMgr::OnSpellCheckCast(Spell* spell, bool strict, SpellCastResult& res)
 {
     CALL_ENABLED_HOOKS(AllSpellScript, ALLSPELLHOOK_ON_SPELL_CHECK_CAST, script->OnSpellCheckCast(spell, strict, res));
+}
+
+bool ScriptMgr::CanCastWithInsufficientPower(Spell const* spell)
+{
+    CALL_ENABLED_BOOLEAN_HOOKS_WITH_DEFAULT_FALSE(AllSpellScript,
+        ALLSPELLHOOK_CAN_CAST_WITH_INSUFFICIENT_POWER,
+        script->CanCastWithInsufficientPower(spell));
 }
 
 bool ScriptMgr::CanPrepare(Spell* spell, SpellCastTargets const* targets, AuraEffect const* triggeredByAura)
@@ -87,6 +106,22 @@ void ScriptMgr::OnSpellCast(Spell* spell, Unit* caster, SpellInfo const* spellIn
 void ScriptMgr::OnSpellPrepare(Spell* spell, Unit* caster, SpellInfo const* spellInfo)
 {
     CALL_ENABLED_HOOKS(AllSpellScript, ALLSPELLHOOK_ON_PREPARE, script->OnSpellPrepare(spell, caster, spellInfo));
+}
+
+void ScriptMgr::OnCalculatePowerCost(Spell* spell, int32& powerCost)
+{
+    CALL_ENABLED_HOOKS(AllSpellScript, ALLSPELLHOOK_ON_CALCULATE_POWER_COST,
+        script->OnCalculatePowerCost(spell, powerCost));
+}
+
+bool ScriptMgr::CanCastWhileMoving(Spell const* spell)
+{
+    CALL_ENABLED_BOOLEAN_HOOKS_WITH_DEFAULT_FALSE(AllSpellScript, ALLSPELLHOOK_CAN_CAST_WHILE_MOVING, script->CanCastWhileMoving(spell));
+}
+
+bool ScriptMgr::CanCastWhileMounted(Spell const* spell)
+{
+    CALL_ENABLED_BOOLEAN_HOOKS_WITH_DEFAULT_FALSE(AllSpellScript, ALLSPELLHOOK_CAN_CAST_WHILE_MOUNTED, script->CanCastWhileMounted(spell));
 }
 
 AllSpellScript::AllSpellScript(char const* name, std::vector<uint16> enabledHooks)

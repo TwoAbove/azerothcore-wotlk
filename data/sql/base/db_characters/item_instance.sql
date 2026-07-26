@@ -32,6 +32,7 @@ CREATE TABLE `item_instance` (
   `flags` int unsigned DEFAULT '0',
   `enchantments` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `randomPropertyId` smallint NOT NULL DEFAULT '0',
+  `bonusSeed` int unsigned NOT NULL DEFAULT '0',
   `durability` smallint unsigned NOT NULL DEFAULT '0',
   `playedTime` int unsigned NOT NULL DEFAULT '0',
   `text` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,

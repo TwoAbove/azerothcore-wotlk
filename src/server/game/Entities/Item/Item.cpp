@@ -30,6 +30,19 @@
 #include "Tokenize.h"
 #include "WorldPacket.h"
 
+namespace
+{
+uint32 DeriveItemBonusSeed(ObjectGuid::LowType guid, uint32 entry)
+{
+    uint64 value = (uint64(guid) << 32) | entry;
+    value += 0x9E3779B97F4A7C15ULL;
+    value = (value ^ (value >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    value = (value ^ (value >> 27)) * 0x94D049BB133111EBULL;
+    value ^= value >> 31;
+    return Item::GenerateItemBonusSeed(entry, uint32(value));
+}
+}
+
 void AddItemsSetItem(Player* player, Item* item)
 {
     ItemTemplate const* proto = item->GetTemplate();
@@ -268,6 +281,7 @@ Item::Item()
 
     m_valuesCount = ITEM_END;
     m_slot = 0;
+    m_bonusSeed = ITEM_BONUS_SEED_UNSET;
     uState = ITEM_NEW;
     uQueuePos = -1;
     m_container = nullptr;
@@ -341,6 +355,12 @@ void Item::SaveToDB(CharacterDatabaseTransaction trans)
         trans = CharacterDatabase.BeginTransaction();
 
     ObjectGuid::LowType guid = GetGUID().GetCounter();
+    if ((uState == ITEM_NEW || uState == ITEM_CHANGED)
+        && (!guid || guid >= ObjectGuid::GetMaxCounter(HighGuid::Item) - 1))
+    {
+        LOG_ERROR("entities.player.items", "Refusing to persist item {} with reserved GUID {}", GetEntry(), guid);
+        return;
+    }
     switch (uState)
     {
         case ITEM_NEW:
@@ -375,6 +395,7 @@ void Item::SaveToDB(CharacterDatabaseTransaction trans)
                 stmt->SetData(++index, GetUInt32Value(ITEM_FIELD_DURABILITY));
                 stmt->SetData(++index, GetUInt32Value(ITEM_FIELD_CREATE_PLAYED_TIME));
                 stmt->SetData(++index, m_text);
+                stmt->SetData(++index, GetBonusSeed());
                 stmt->SetData(++index, guid);
 
                 trans->Append(stmt);
@@ -390,13 +411,11 @@ void Item::SaveToDB(CharacterDatabaseTransaction trans)
             }
         case ITEM_REMOVED:
             {
-                CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_ITEM_INSTANCE);
-                stmt->SetData(0, guid);
-                trans->Append(stmt);
+                Item::DeleteFromDB(trans, guid);
 
                 if (IsWrapped())
                 {
-                    stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_GIFT);
+                    CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_GIFT);
                     stmt->SetData(0, guid);
                     trans->Append(stmt);
                 }
@@ -501,6 +520,12 @@ bool Item::LoadFromDB(ObjectGuid::LowType guid, ObjectGuid owner_guid, Field* fi
 
     SetUInt32Value(ITEM_FIELD_CREATE_PLAYED_TIME, fields[9].Get<uint32>());
     SetText(fields[10].Get<std::string>());
+    m_bonusSeed = fields[11].Get<uint32>();
+    if (!m_bonusSeed)
+    {
+        m_bonusSeed = DeriveItemBonusSeed(guid, entry);
+        need_save = true;
+    }
 
     if (need_save)                                           // normal item changed state set not work at loading
     {
@@ -508,9 +533,11 @@ bool Item::LoadFromDB(ObjectGuid::LowType guid, ObjectGuid owner_guid, Field* fi
         stmt->SetData(0, GetUInt32Value(ITEM_FIELD_DURATION));
         stmt->SetData(1, GetUInt32Value(ITEM_FIELD_FLAGS));
         stmt->SetData(2, GetUInt32Value(ITEM_FIELD_DURABILITY));
-        stmt->SetData(3, guid);
+        stmt->SetData(3, GetBonusSeed());
+        stmt->SetData(4, guid);
         CharacterDatabase.Execute(stmt);
     }
+
 
     return true;
 }
@@ -1091,7 +1118,18 @@ void Item::SendTimeUpdate(Player* owner)
     owner->SendDirectMessage(&data);
 }
 
-Item* Item::CreateItem(uint32 item, uint32 count, Player const* player, bool clone, uint32 randomPropertyId, bool temp)
+uint32 Item::GenerateItemBonusSeed(uint32 item, uint32 entropy)
+{
+    ItemTemplate const* itemTemplate = sObjectMgr->GetItemTemplate(item);
+    if (!itemTemplate)
+        return ITEM_BONUS_SEED_UNSET;
+
+    uint32 bonusSeed = MakeItemBonusSeed(0);
+    sScriptMgr->OnItemBonusSeedGenerate(itemTemplate, entropy, bonusSeed);
+    return bonusSeed;
+}
+
+Item* Item::CreateItem(uint32 item, uint32 count, Player const* player, bool clone, uint32 randomPropertyId, bool temp, uint32 bonusSeed)
 {
     if (count < 1)
         return nullptr;                                        //don't create item at zero count
@@ -1124,6 +1162,7 @@ Item* Item::CreateItem(uint32 item, uint32 count, Player const* player, bool clo
         pItem->SetItemRandomProperties(randomPropertyId ? randomPropertyId : Item::GenerateItemRandomPropertyId(item));
     else if (randomPropertyId)
         pItem->SetItemRandomProperties(randomPropertyId);
+    pItem->SetBonusSeed(bonusSeed ? bonusSeed : DeriveItemBonusSeed(guid, item));
 
     return pItem;
 }
@@ -1131,7 +1170,7 @@ Item* Item::CreateItem(uint32 item, uint32 count, Player const* player, bool clo
 Item* Item::CloneItem(uint32 count, Player const* player) const
 {
     // player CAN be nullptr in which case we must not update random properties because that accesses player's item update queue
-    Item* newItem = CreateItem(GetEntry(), count, player, true, player ? GetItemRandomPropertyId() : 0);
+    Item* newItem = CreateItem(GetEntry(), count, player, true, player ? GetItemRandomPropertyId() : 0, false, GetBonusSeed());
     if (!newItem)
         return nullptr;
 
@@ -1274,7 +1313,7 @@ void Item::SetSoulboundTradeable(AllowedLooterSet& allowedLooters)
     allowedGUIDs = allowedLooters;
 }
 
-void Item::ClearSoulboundTradeable(Player* currentOwner)
+void Item::ClearSoulboundTradeable(Player* currentOwner, CharacterDatabaseTransaction* trans)
 {
     RemoveFlag(ITEM_FIELD_FLAGS, ITEM_FIELD_FLAG_BOP_TRADEABLE);
     if (allowedGUIDs.empty())
@@ -1284,7 +1323,10 @@ void Item::ClearSoulboundTradeable(Player* currentOwner)
     SetState(ITEM_CHANGED, currentOwner);
     CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_ITEM_BOP_TRADE);
     stmt->SetData(0, GetGUID().GetCounter());
-    CharacterDatabase.Execute(stmt);
+    if (trans)
+        (*trans)->Append(stmt);
+    else
+        CharacterDatabase.Execute(stmt);
 }
 
 bool Item::CheckSoulboundTradeExpire()

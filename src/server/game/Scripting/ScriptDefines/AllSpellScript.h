@@ -24,7 +24,10 @@
 enum AllSpellHook
 {
     ALLSPELLHOOK_ON_CALC_MAX_DURATION,
+    ALLSPELLHOOK_ON_CALC_CRIT_CHANCE,
+    ALLSPELLHOOK_ON_CALC_PERIODIC_CRIT_CHANCE,
     ALLSPELLHOOK_ON_SPELL_CHECK_CAST,
+    ALLSPELLHOOK_CAN_CAST_WITH_INSUFFICIENT_POWER,
     ALLSPELLHOOK_CAN_PREPARE,
     ALLSPELLHOOK_CAN_SCALING_EVERYTHING,
     ALLSPELLHOOK_CAN_SELECT_SPEC_TALENT,
@@ -37,6 +40,9 @@ enum AllSpellHook
     ALLSPELLHOOK_ON_CAST_CANCEL,
     ALLSPELLHOOK_ON_CAST,
     ALLSPELLHOOK_ON_PREPARE,
+    ALLSPELLHOOK_CAN_CAST_WHILE_MOVING,
+    ALLSPELLHOOK_CAN_CAST_WHILE_MOUNTED,
+    ALLSPELLHOOK_ON_CALCULATE_POWER_COST,
     ALLSPELLHOOK_END
 };
 
@@ -54,7 +60,17 @@ public:
     // Calculate max duration in applying aura
     virtual void OnCalcMaxDuration(Aura const* /*aura*/, int32& /*maxDuration*/) { }
 
+    // Called after caster and target critical modifiers, before the roll
+    virtual void OnCalcCritChance(Spell* /*spell*/, Unit* /*target*/, float& /*critChance*/) { }
+
+    // Called after caster and target periodic critical modifiers, before the roll
+    virtual void OnCalcPeriodicCritChance(SpellInfo const* /*spellInfo*/, Unit const* /*caster*/,
+        Unit const* /*target*/, float& /*critChance*/) { }
+
     virtual void OnSpellCheckCast(Spell* /*spell*/, bool /*strict*/, SpellCastResult& /*res*/) { }
+
+    // Return true to let this spell consume its available power and handle the shortfall itself.
+    [[nodiscard]] virtual bool CanCastWithInsufficientPower(Spell const* /*spell*/) { return false; }
 
     [[nodiscard]] virtual bool CanPrepare(Spell* /*spell*/, SpellCastTargets const* /*targets*/, AuraEffect const* /*triggeredByAura*/) { return true; }
 
@@ -103,6 +119,13 @@ public:
     virtual void OnSpellCast(Spell* /*spell*/, Unit* /*caster*/, SpellInfo const* /*spellInfo*/, bool /*skipCheck*/) { }
 
     virtual void OnSpellPrepare(Spell* /*spell*/, Unit* /*caster*/, SpellInfo const* /*spellInfo*/) { }
+    virtual void OnCalculatePowerCost(Spell* /*spell*/, int32& /*powerCost*/) { }
+
+    // Return true to let this spell keep casting/channeling while the caster moves.
+    [[nodiscard]] virtual bool CanCastWhileMoving(Spell const* /*spell*/) { return false; }
+
+    // Return true to let a player cast this spell while on a mount.
+    [[nodiscard]] virtual bool CanCastWhileMounted(Spell const* /*spell*/) { return false; }
 };
 
 // Compatibility for old scripts

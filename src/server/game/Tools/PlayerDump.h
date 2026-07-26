@@ -18,7 +18,9 @@
 #ifndef _PLAYER_DUMP_H
 #define _PLAYER_DUMP_H
 
+#include "DatabaseEnvFwd.h"
 #include "ObjectGuid.h"
+#include <functional>
 #include <set>
 
 enum DumpTableType
@@ -61,6 +63,7 @@ enum DumpReturn
 struct DumpTable;
 struct TableStruct;
 class StringTransaction;
+using DumpTransactionExtension = std::function<bool(CharacterDatabaseTransaction const& transaction)>;
 
 class PlayerDump
 {
@@ -96,11 +99,15 @@ class PlayerDumpReader : public PlayerDump
 public:
     PlayerDumpReader() { }
 
-    DumpReturn LoadDumpFromFile(std::string const& file, uint32 account, std::string name, ObjectGuid::LowType guid);
+    DumpReturn LoadDumpFromFile(std::string const& file, uint32 account, std::string name,
+        ObjectGuid::LowType guid, bool synchronous = false, bool preserveGuids = false,
+        bool replaceExisting = false, DumpTransactionExtension const& transactionExtension = {});
     DumpReturn LoadDumpFromString(std::string const& dump, uint32 account, std::string name, ObjectGuid::LowType guid);
 
 private:
-    DumpReturn LoadDump(std::istream& input, uint32 account, std::string name, ObjectGuid::LowType guid);
+    DumpReturn LoadDump(std::istream& input, uint32 account, std::string name,
+        ObjectGuid::LowType guid, bool synchronous, bool preserveGuids, bool replaceExisting,
+        DumpTransactionExtension const& transactionExtension);
 };
 
 #endif

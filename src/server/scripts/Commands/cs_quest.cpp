@@ -204,9 +204,7 @@ public:
                     stmt->SetData(0, fields[0].Get<uint32>());
                     trans->Append(stmt);
 
-                    stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_ITEM_INSTANCE);
-                    stmt->SetData(0, fields[0].Get<uint32>());
-                    trans->Append(stmt);
+                    Item::DeleteFromDB(trans, fields[0].Get<uint32>());
                 }
             }
 
@@ -546,9 +544,7 @@ public:
                     stmt->SetData(0, fields[0].Get<uint32>());
                     trans->Append(stmt);
 
-                    stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_ITEM_INSTANCE);
-                    stmt->SetData(0, fields[0].Get<uint32>());
-                    trans->Append(stmt);
+                    Item::DeleteFromDB(trans, fields[0].Get<uint32>());
                 }
             }
 
@@ -568,9 +564,7 @@ public:
                     stmt->SetData(0, fields[0].Get<uint32>());
                     trans->Append(stmt);
 
-                    stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_ITEM_INSTANCE);
-                    stmt->SetData(0, fields[0].Get<uint32>());
-                    trans->Append(stmt);
+                    Item::DeleteFromDB(trans, fields[0].Get<uint32>());
                 }
             }
 

@@ -666,6 +666,7 @@ Spell::Spell(Unit* caster, SpellInfo const* info, TriggerCastFlags triggerFlags,
 
     m_runesState = 0;
     m_powerCost = 0;                                        // setup to correct value in Spell::prepare, must not be used before.
+    _powerCostBeforeScripts = 0;
     m_casttime = 0;                                         // setup to correct value in Spell::prepare, must not be used before.
     m_timer = 0;                                            // will set to castime in prepare
     m_channeledDuration = 0;                                // will be setup in Spell::handle_immediate
@@ -3521,7 +3522,7 @@ SpellCastResult Spell::prepare(SpellCastTargets const* targets, AuraEffect const
 
     OnSpellLaunch();
 
-    m_powerCost = m_CastItem ? 0 : m_spellInfo->CalcPowerCost(m_caster, m_spellSchoolMask, this);
+    CalculatePowerCost();
 
     // Set combo point requirement
     if (HasTriggeredCastFlag(TRIGGERED_IGNORE_COMBO_POINTS) || m_CastItem)
@@ -3562,7 +3563,7 @@ SpellCastResult Spell::prepare(SpellCastTargets const* targets, AuraEffect const
 
     // don't allow channeled spells / spells with cast time to be casted while moving
     // (even if they are interrupted on moving, spells with almost immediate effect get to have their effect processed before movement interrupter kicks in)
-    if ((m_spellInfo->IsChanneled() || m_casttime) && m_caster->IsPlayer() && m_caster->isMoving() && m_spellInfo->InterruptFlags & SPELL_INTERRUPT_FLAG_MOVEMENT && !IsTriggered())
+    if ((m_spellInfo->IsChanneled() || m_casttime) && m_caster->IsPlayer() && m_caster->isMoving() && m_spellInfo->InterruptFlags & SPELL_INTERRUPT_FLAG_MOVEMENT && !IsTriggered() && !sScriptMgr->CanCastWhileMoving(this))
     {
         // 1. Has casttime, 2. Or doesn't have flag to allow action during channel
         if (m_casttime || !m_spellInfo->IsActionAllowedChannel())
@@ -4409,7 +4410,7 @@ void Spell::update(uint32 difftime)
     // check if the player caster has moved before the spell finished
     // xinef: added preparing state (real cast, skip channels as they have other flags for this)
     if ((m_caster->IsPlayer() && m_timer != 0) &&
-            m_caster->isMoving() && (m_spellInfo->InterruptFlags & SPELL_INTERRUPT_FLAG_MOVEMENT) && m_spellState == SPELL_STATE_PREPARING &&
+            m_caster->isMoving() && (m_spellInfo->InterruptFlags & SPELL_INTERRUPT_FLAG_MOVEMENT) && m_spellState == SPELL_STATE_PREPARING && !sScriptMgr->CanCastWhileMoving(this) &&
             (m_spellInfo->Effects[0].Effect != SPELL_EFFECT_STUCK || !m_caster->HasUnitMovementFlag(MOVEMENTFLAG_FALLING_FAR)))
     {
         // don't cancel for melee, autorepeat, triggered and instant spells
@@ -5314,6 +5315,13 @@ void Spell::TakeCastItem()
     }
 }
 
+void Spell::CalculatePowerCost()
+{
+    m_powerCost = m_CastItem ? 0 : m_spellInfo->CalcPowerCost(m_caster, m_spellSchoolMask, this);
+    _powerCostBeforeScripts = m_powerCost;
+    sScriptMgr->OnCalculatePowerCost(this, m_powerCost);
+}
+
 void Spell::TakePower()
 {
     if (m_CastItem || m_triggeredByAuraSpell)
@@ -6017,7 +6025,7 @@ SpellCastResult Spell::CheckCast(bool strict, uint32* /*param1*/, uint32* /*para
 
     // not let players cast spells at mount (and let do it to creatures)
     if (m_caster->IsMounted() && m_caster->IsPlayer() && !HasTriggeredCastFlag(TRIGGERED_IGNORE_CASTER_MOUNTED_OR_ON_VEHICLE) &&
-            !m_spellInfo->IsPassive() && !m_spellInfo->HasAttribute(SPELL_ATTR0_ALLOW_WHILE_MOUNTED))
+            !m_spellInfo->IsPassive() && !m_spellInfo->HasAttribute(SPELL_ATTR0_ALLOW_WHILE_MOUNTED) && !sScriptMgr->CanCastWhileMounted(this))
     {
         if (m_caster->IsInFlight())
             return SPELL_FAILED_NOT_ON_TAXI;
@@ -6891,7 +6899,7 @@ SpellCastResult Spell::CheckPetCast(Unit* target)
     }
 
     // xinef: Calculate power cost here, so funciton checking power can work properly and dont return bad results
-    m_powerCost = m_spellInfo->CalcPowerCost(m_caster, m_spellSchoolMask, this);
+    CalculatePowerCost();
 
     // cooldown
     if (Creature const* creatureCaster = m_caster->ToCreature())
@@ -7243,7 +7251,8 @@ SpellCastResult Spell::CheckPower()
 
     // Check power amount
     Powers PowerType = Powers(m_spellInfo->PowerType);
-    if (int32(m_caster->GetPower(PowerType)) < m_powerCost)
+    if (int32(m_caster->GetPower(PowerType)) < m_powerCost
+        && !sScriptMgr->CanCastWithInsufficientPower(this))
         return SPELL_FAILED_NO_POWER;
     else
         return SPELL_CAST_OK;
@@ -8472,6 +8481,7 @@ void Spell::DoAllEffectOnLaunchTarget(TargetInfo& targetInfo, float* multiplier)
 
     float critChance = caster->SpellDoneCritChance(unit, m_spellInfo, m_spellSchoolMask, m_attackType, false);
     critChance = unit->SpellTakenCritChance(caster, m_spellInfo, m_spellSchoolMask, critChance, m_attackType, false);
+    sScriptMgr->OnCalcCritChance(this, unit, critChance);
     targetInfo.crit = roll_chance_f(std::max(0.0f, critChance));
 }
 

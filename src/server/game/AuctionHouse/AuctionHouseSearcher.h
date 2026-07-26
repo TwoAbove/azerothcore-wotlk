@@ -25,6 +25,8 @@
 #include "MPSCQueue.h"
 #include "PCQueue.h"
 #include <memory>
+#include <utility>
+#include <vector>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -70,6 +72,7 @@ struct SearchableAuctionEntryItem
     AuctionEntryItemEnchants enchants[MAX_INSPECTED_ENCHANTMENT_SLOT];
     int32 randomPropertyId;
     uint32 suffixFactor;
+    uint32 bonusSeed;
     uint32 count;
     int32 spellCharges;
     ItemTemplate const* itemTemplate;
@@ -181,6 +184,8 @@ struct AuctionSearchBidderListRequest : AuctionSearcherRequest
 struct AuctionSearcherResponse
 {
     ObjectGuid playerGuid;
+    uint8 listType = 0;
+    std::vector<uint32> itemBonusSeeds;
     WorldPacket packet;
 };
 

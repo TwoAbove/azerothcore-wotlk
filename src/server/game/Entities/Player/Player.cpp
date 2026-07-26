@@ -840,6 +840,8 @@ uint32 Player::EnvironmentalDamage(EnviromentalDamage type, uint32 damage)
             break;
     }
 
+    sScriptMgr->OnPlayerEnvironmentalDamage(this, type, damage);
+
     Unit::DealDamageMods(this, damage, &absorb);
 
     WorldPackets::CombatLog::EnvironmentalDamageLog packet;
@@ -4864,6 +4866,9 @@ void Player::DurabilityPointsLossAll(int32 points, bool inventory)
 void Player::DurabilityPointsLoss(Item* item, int32 points)
 {
     if (HasPreventDurabilityLossAura())
+        return;
+
+    if (points > 0 && !sScriptMgr->CanItemLoseDurability(this, item))
         return;
 
     int32 pMaxDurability = item->GetUInt32Value(ITEM_FIELD_MAXDURABILITY);
@@ -13826,7 +13831,7 @@ void Player::AutoStoreLoot(uint8 bag, uint8 slot, uint32 loot_id, LootStore cons
             continue;
         }
 
-        Item* pItem = StoreNewItem(dest, lootItem->itemid, true, lootItem->randomPropertyId);
+        Item* pItem = StoreNewItem(dest, lootItem->itemid, true, lootItem->randomPropertyId, false, lootItem->bonusSeed);
         SendNewItem(pItem, lootItem->count, false, false, broadcast);
     }
 }
@@ -13883,7 +13888,7 @@ LootItem* Player::StoreLootItem(uint8 lootSlot, Loot* loot, InventoryResult& msg
     if (msg == EQUIP_ERR_OK)
     {
         AllowedLooterSet looters = item->GetAllowedLooters();
-        Item* newitem = StoreNewItem(dest, item->itemid, true, item->randomPropertyId, looters);
+        Item* newitem = StoreNewItem(dest, item->itemid, true, item->randomPropertyId, looters, false, item->bonusSeed);
 
         if (qitem)
         {
@@ -14884,7 +14889,7 @@ void Player::BuildEnchantmentsInfoData(WorldPacket* data)
 
         *data << int16(item->GetItemRandomPropertyId());                    // item random property id
         *data << item->GetGuidValue(ITEM_FIELD_CREATOR).WriteAsPacked();    // item creator
-        *data << uint32(item->GetItemSuffixFactor());                       // item suffix factor
+        *data << uint32(item->GetItemPropertySeed());                         // item suffix factor
     }
 
     data->put<uint32>(slotUsedMaskPos, slotUsedMask);

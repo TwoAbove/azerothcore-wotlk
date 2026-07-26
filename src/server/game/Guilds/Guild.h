@@ -794,6 +794,7 @@ public:
     bool MemberHasTabRights(ObjectGuid guid, uint8 tabId, uint32 rights) const;
     bool HasRankRight(Player* player, uint32 right) const;
     uint32 GetRankRights(uint8 rankId) const;
+    std::string GetRankName(uint8 rankId) const;
 
 protected:
     uint32 m_id;

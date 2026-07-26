@@ -33,6 +33,7 @@
 #include "GossipDef.h"
 #include "GroupMgr.h"
 #include "GuildMgr.h"
+#include "Item.h"
 #include "LFGMgr.h"
 #include "Log.h"
 #include "MapMgr.h"
@@ -6805,6 +6806,7 @@ void ObjectMgr::LoadNpcTextLocales()
     LOG_INFO("server.loading", ">> Loaded {} Npc Text Locale Strings in {} ms", (uint32)_npcTextLocaleStore.size(), GetMSTimeDiffToNow(oldMSTime));
 }
 
+
 void ObjectMgr::LoadQuestAreaTriggers()
 {
     uint32 oldMSTime = getMSTime();
@@ -7575,15 +7577,36 @@ void ObjectMgr::SetHighestGuids()
     if (result)
         GetGuidSequenceGenerator<HighGuid::Player>().Set((*result)[0].Get<uint32>() + 1);
 
-    result = CharacterDatabase.Query("SELECT MAX(guid) FROM item_instance");
+    ObjectGuid::LowType const firstReservedItemGuid = ObjectGuid::GetMaxCounter(HighGuid::Item) - 1;
+    result = CharacterDatabase.Query(
+        "SELECT COALESCE(MAX(guid), 0) FROM item_instance WHERE guid < '{}'", firstReservedItemGuid);
     if (result)
         GetGuidSequenceGenerator<HighGuid::Item>().Set((*result)[0].Get<uint32>() + 1);
 
-    // Cleanup other tables from not existed guids ( >= _hiItemGuid)
-    CharacterDatabase.Execute("DELETE FROM character_inventory WHERE item >= '{}'", GetGuidSequenceGenerator<HighGuid::Item>().GetNextAfterMaxUsed());     // One-time query
-    CharacterDatabase.Execute("DELETE FROM mail_items WHERE item_guid >= '{}'", GetGuidSequenceGenerator<HighGuid::Item>().GetNextAfterMaxUsed());         // One-time query
-    CharacterDatabase.Execute("DELETE FROM auctionhouse WHERE itemguid >= '{}'", GetGuidSequenceGenerator<HighGuid::Item>().GetNextAfterMaxUsed());        // One-time query
-    CharacterDatabase.Execute("DELETE FROM guild_bank_item WHERE item_guid >= '{}'", GetGuidSequenceGenerator<HighGuid::Item>().GetNextAfterMaxUsed());    // One-time query
+    // Remove references to missing or reserved item GUIDs before auction and inventory state is loaded.
+    CharacterDatabase.DirectExecute(
+        "DELETE ci FROM character_inventory ci LEFT JOIN item_instance ii ON ii.guid = ci.item "
+        "WHERE ii.guid IS NULL OR ci.item = 0 OR ci.item >= '{}'", firstReservedItemGuid);
+    CharacterDatabase.DirectExecute(
+        "DELETE mi FROM mail_items mi LEFT JOIN item_instance ii ON ii.guid = mi.item_guid "
+        "WHERE ii.guid IS NULL OR mi.item_guid = 0 OR mi.item_guid >= '{}'", firstReservedItemGuid);
+    CharacterDatabase.DirectExecute(
+        "DELETE ah FROM auctionhouse ah LEFT JOIN item_instance ii ON ii.guid = ah.itemguid "
+        "WHERE ii.guid IS NULL OR ah.itemguid = 0 OR ah.itemguid >= '{}'", firstReservedItemGuid);
+    CharacterDatabase.DirectExecute(
+        "DELETE gbi FROM guild_bank_item gbi LEFT JOIN item_instance ii ON ii.guid = gbi.item_guid "
+        "WHERE ii.guid IS NULL OR gbi.item_guid = 0 OR gbi.item_guid >= '{}'", firstReservedItemGuid);
+    CharacterDatabase.DirectExecute(
+        "DELETE cg FROM character_gifts cg LEFT JOIN item_instance ii ON ii.guid = cg.item_guid "
+        "WHERE ii.guid IS NULL OR cg.item_guid = 0 OR cg.item_guid >= '{}'", firstReservedItemGuid);
+    CharacterDatabase.DirectExecute(
+        "DELETE iri FROM item_refund_instance iri LEFT JOIN item_instance ii ON ii.guid = iri.item_guid "
+        "WHERE ii.guid IS NULL OR iri.item_guid = 0 OR iri.item_guid >= '{}'", firstReservedItemGuid);
+    CharacterDatabase.DirectExecute(
+        "DELETE istd FROM item_soulbound_trade_data istd LEFT JOIN item_instance ii ON ii.guid = istd.itemGuid "
+        "WHERE ii.guid IS NULL OR istd.itemGuid = 0 OR istd.itemGuid >= '{}'", firstReservedItemGuid);
+    CharacterDatabase.DirectExecute(
+        "DELETE FROM item_instance WHERE guid = 0 OR guid >= '{}'", firstReservedItemGuid);
 
     result = WorldDatabase.Query("SELECT MAX(guid) FROM transports");
     if (result)

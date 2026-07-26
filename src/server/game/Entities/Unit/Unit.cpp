@@ -979,7 +979,7 @@ void Unit::DealDamageMods(Unit const* victim, uint32& damage, uint32* absorb)
     }
 }
 
-uint32 Unit::DealDamage(Unit* attacker, Unit* victim, uint32 damage, CleanDamage const* cleanDamage, DamageEffectType damagetype, SpellSchoolMask damageSchoolMask, SpellInfo const* spellProto, bool durabilityLoss, bool /*allowGM*/, Spell const* damageSpell /*= nullptr*/)
+uint32 Unit::DealDamage(Unit* attacker, Unit* victim, uint32 damage, CleanDamage const* cleanDamage, DamageEffectType damagetype, SpellSchoolMask damageSchoolMask, SpellInfo const* spellProto, bool durabilityLoss, bool /*allowGM*/, Spell const* damageSpell /*= nullptr*/, DamageEffectType reportedDamageType /*= NODAMAGE*/)
 {
     damage = sScriptMgr->DealDamage(attacker, victim, damage, damagetype);
     // Xinef: initialize damage done for rage calculations
@@ -1015,6 +1015,7 @@ uint32 Unit::DealDamage(Unit* attacker, Unit* victim, uint32 damage, CleanDamage
             return 0;
         }
     }
+
 
     // Signal the pet it was attacked so the AI can respond if needed
     if (victim->IsCreature() && attacker != victim && victim->IsPet() && victim->IsAlive())
@@ -1096,7 +1097,8 @@ uint32 Unit::DealDamage(Unit* attacker, Unit* victim, uint32 damage, CleanDamage
                 attacker->SendSpellNonMeleeDamageLog(shareDamageTarget, spell, shareDamage, damageSchoolMask, shareAbsorb, shareResist, damagetype == DIRECT_DAMAGE, 0, false, true);
             }
 
-            Unit::DealDamage(attacker, shareDamageTarget, shareDamage, cleanDamage, NODAMAGE, damageSchoolMask, spellProto, false, false, damageSpell);
+            Unit::DealDamage(attacker, shareDamageTarget, shareDamage, cleanDamage, NODAMAGE,
+                damageSchoolMask, spellProto, false, false, damageSpell, damagetype);
         }
     }
 
@@ -1178,6 +1180,25 @@ uint32 Unit::DealDamage(Unit* attacker, Unit* victim, uint32 damage, CleanDamage
         }
     }
 
+    // Sparring
+    if (victim->CanSparringWith(attacker))
+    {
+        if (damage >= victim->GetHealth())
+            damage = 0;
+
+        uint32 sparringHealth = victim->GetHealth() * (victim->ToCreature()->GetSparringPct() / 100);
+        if (victim->GetHealth() - damage <= sparringHealth)
+            damage = 0;
+    }
+
+    DamageEffectType finalDamageType = reportedDamageType != NODAMAGE ? reportedDamageType : damagetype;
+    if (damage && finalDamageType != NODAMAGE)
+    {
+        sScriptMgr->ModifyDamageFinal(attacker, victim, damage, finalDamageType, spellProto, damageSpell);
+        if (damage)
+            sScriptMgr->OnDamageFinal(attacker, victim, damage, finalDamageType, spellProto, damageSpell);
+    }
+
     if (attacker && attacker != victim)
         if (Player* killer = attacker->GetCharmerOrOwnerPlayerOrPlayerItself())
         {
@@ -1220,16 +1241,6 @@ uint32 Unit::DealDamage(Unit* attacker, Unit* victim, uint32 damage, CleanDamage
         }
     }
 
-    // Sparring
-    if (victim->CanSparringWith(attacker))
-    {
-        if (damage >= victim->GetHealth())
-            damage = 0;
-
-        uint32 sparringHealth = victim->GetHealth() * (victim->ToCreature()->GetSparringPct() / 100);
-        if (victim->GetHealth() - damage <= sparringHealth)
-            damage = 0;
-    }
 
     if (health <= damage)
     {
@@ -4754,6 +4765,12 @@ AuraApplication* Unit::_CreateAuraApplication(Aura* aura, uint8 effMask)
 
     Unit* caster = aura->GetCaster();
 
+    uint8 const originalEffectMask = effMask;
+    sScriptMgr->ModifyAuraEffectMask(this, aura, effMask);
+    effMask &= originalEffectMask;
+    if (!effMask)
+        return nullptr;
+
     AuraApplication* aurApp = new AuraApplication(this, caster, aura, effMask);
     m_appliedAuras.insert(AuraApplicationMap::value_type(aurId, aurApp));
 
@@ -5487,7 +5504,8 @@ void Unit::RemoveAurasWithInterruptFlags(uint32 flag, uint32 except, bool isAuto
     // interrupt channeled spell
     if (Spell* spell = m_currentSpells[CURRENT_CHANNELED_SPELL])
     {
-        if (spell->getState() == SPELL_STATE_CASTING && (spell->m_spellInfo->ChannelInterruptFlags & flag) && spell->m_spellInfo->Id != except)
+        if (spell->getState() == SPELL_STATE_CASTING && (spell->m_spellInfo->ChannelInterruptFlags & flag) && spell->m_spellInfo->Id != except
+            && !((flag & (AURA_INTERRUPT_FLAG_MOVE | AURA_INTERRUPT_FLAG_TURNING)) && sScriptMgr->CanCastWhileMoving(spell)))
         {
             // Do not interrupt if auto shot
             if (!(isAutoshot && spell->m_spellInfo->HasAttribute(SPELL_ATTR2_DO_NOT_RESET_COMBAT_TIMERS)))
@@ -7349,8 +7367,8 @@ bool Unit::Attack(Unit* victim, bool meleeAttack)
     if (!IsInMap(victim) || !InSamePhase(victim))
         return false;
 
-    // player cannot attack in mount state
-    if (IsPlayer() && IsMounted())
+    // Players are dismounted by default unless a script grants this mounted attack.
+    if (IsPlayer() && IsMounted() && !sScriptMgr->CanAttackWhileMounted(ToPlayer(), victim, meleeAttack))
         return false;
 
     // creatures cannot attack while evading
@@ -8108,6 +8126,15 @@ void Unit::SetCharm(Unit* charm, bool apply)
 
 int32 Unit::DealHeal(Unit* healer, Unit* victim, uint32 addhealth)
 {
+    HealInfo healInfo(healer, victim, addhealth, nullptr, SPELL_SCHOOL_MASK_NORMAL);
+    return DealHeal(healInfo);
+}
+
+int32 Unit::DealHeal(HealInfo& healInfo)
+{
+    Unit* healer = healInfo.GetHealer();
+    Unit* victim = healInfo.GetTarget();
+    uint32 addhealth = healInfo.GetHeal();
     int32 gain = 0;
 
     if (healer)
@@ -8122,11 +8149,10 @@ int32 Unit::DealHeal(Unit* healer, Unit* victim, uint32 addhealth)
     if (addhealth)
         gain = victim->ModifyHealth(int32(addhealth));
 
-    // Hook for OnHeal Event
-    sScriptMgr->OnHeal(healer, victim, (uint32&)gain);
+    healInfo.SetEffectiveHeal(uint32(gain));
+    sScriptMgr->OnHealFinal(healInfo);
 
     Unit* unit = healer;
-
     if (healer && healer->IsCreature() && healer->ToCreature()->IsTotem())
         unit = healer->GetOwner();
 
@@ -8412,8 +8438,7 @@ int32 Unit::HealBySpell(HealInfo& healInfo, bool critical)
     // calculate heal absorb and reduce healing
     CalcHealAbsorb(healInfo);
 
-    int32 gain = Unit::DealHeal(healInfo.GetHealer(), healInfo.GetTarget(), healInfo.GetHeal());
-    healInfo.SetEffectiveHeal(gain);
+    int32 gain = Unit::DealHeal(healInfo);
 
     SendHealSpellLog(healInfo, critical);
     return gain;

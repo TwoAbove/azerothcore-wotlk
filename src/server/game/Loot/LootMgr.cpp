@@ -23,6 +23,7 @@
 #include "Log.h"
 #include "ObjectMgr.h"
 #include "Player.h"
+#include "Random.h"
 #include "ScriptMgr.h"
 #include "SharedDefines.h"
 #include "SpellInfo.h"
@@ -404,6 +405,7 @@ LootItem::LootItem(LootStoreItem const& li)
 
     randomSuffix = GenerateEnchSuffixFactor(itemid);
     randomPropertyId = Item::GenerateItemRandomPropertyId(itemid);
+    bonusSeed = Item::GenerateItemBonusSeed(itemid, rand32());
     count = 0;
     is_looted = false;
     is_blocked = false;

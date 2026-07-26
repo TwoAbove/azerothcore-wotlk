@@ -1489,8 +1489,9 @@ void GameObject::Use(Unit* user)
         m_cooldownTime = GameTime::GetGameTimeMS().count() + cooldown * IN_MILLISECONDS;
     }
 
-    if (user->IsPlayer() && GetGoType() != GAMEOBJECT_TYPE_TRAP) // workaround for GO casting
-        if (!m_goInfo->IsUsableMounted())
+    if (Player* playerUser = user->ToPlayer(); playerUser && GetGoType() != GAMEOBJECT_TYPE_TRAP) // workaround for GO casting
+        if (!m_goInfo->IsUsableMounted()
+            && !sScriptMgr->CanUseGameObjectWhileMounted(playerUser, this))
             user->RemoveAurasByType(SPELL_AURA_MOUNTED);
 
     switch (GetGoType())

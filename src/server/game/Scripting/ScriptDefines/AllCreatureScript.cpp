@@ -39,6 +39,16 @@ void ScriptMgr::OnCreatureRemoveWorld(Creature* creature)
     });
 }
 
+void ScriptMgr::OnBeforeCreatureRemoveCorpse(Creature* creature)
+{
+    ASSERT(creature);
+
+    ExecuteScript<AllCreatureScript>([&](AllCreatureScript* script)
+    {
+        script->OnBeforeCreatureRemoveCorpse(creature);
+    });
+}
+
 void ScriptMgr::OnCreatureSaveToDB(Creature* creature)
 {
     ASSERT(creature);
