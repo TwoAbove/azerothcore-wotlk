@@ -1,0 +1,44 @@
+[worldserver]
+
+# Master switch. The harness creates and owns a dedicated local account and
+# character; it never borrows random playerbots or real player sessions.
+TestHarness.Enable = 1
+
+# Start the actor when the world becomes ready. Lifecycle commands remain
+# available when this is disabled.
+TestHarness.AutoStart = 1
+
+# Dedicated account and character. Character names are limited to 12 letters.
+TestHarness.Account = HARNESS_ACTOR
+TestHarness.ActorName = Tertiarytest
+TestHarness.ActorRace = 1
+TestHarness.ActorClass = 8
+TestHarness.ActorGender = 0
+TestHarness.ActorLevel = 80
+
+# Outdoor baseline location (Northshire Valley).
+TestHarness.Map = 0
+TestHarness.X = -8949.95
+TestHarness.Y = -132.493
+TestHarness.Z = 83.5312
+TestHarness.O = 0
+TestHarness.PhaseMask = 1
+
+# Comma-separated baseline spell IDs. Normal race/class spells remain intact.
+TestHarness.Spells = 116,133,1449,2139,12051
+
+# Hostile creature template used for ephemeral, passive test dummies.
+TestHarness.DummyEntry = 118
+TestHarness.DummyFaction = 14
+TestHarness.DummyHealth = 1000000
+
+# Durable baseline and transaction dumps live here. Relative paths are resolved
+# from the worldserver working directory.
+TestHarness.StateDirectory = test-harness
+
+# An open transaction is rolled back automatically after this many seconds.
+# Zero disables the timeout. Runner-owned transactions always roll back.
+TestHarness.TransactionTimeoutSeconds = 300
+
+# In-memory observation capacity. Overflow is explicit in status output.
+TestHarness.MaxEvents = 4096
