@@ -1638,15 +1638,6 @@ DisableWaterBreath = 4
 AllFlightPaths = 0
 
 #
-#    TaxiFlightSpeed
-#        Description: Movement speed used while players travel along taxi flight paths.
-#        Range:       >0.01-50.0
-#        Default:     32.0 - (Blizzlike)
-#        Note:        Values above 50.0 are rejected and fall back to the default value of 32.0.
-
-TaxiFlightSpeed = 32.0
-
-#
 #    InstantFlightPaths
 #        Description: Flight paths will take players to their destination instantly instead
 #                     of making them wait while flying.
@@ -1655,6 +1646,23 @@ TaxiFlightSpeed = 32.0
 #                     2 - (Enabled, but the player can toggle instant flight off or on at each flight master)
 
 InstantFlightPaths = 0
+
+#
+#    FlightPathSpeed
+#        Description: Flight path movement speed in yards per second.
+#        Default:     32.0
+
+FlightPathSpeed = 32.0
+
+#
+#    SmoothSplineSpeedLimit
+#        Description: Maximum server-driven smooth spline speed in yards per second.
+#                     This value must match the client executable's limit. The stock
+#                     3.3.5a client limit is 50. Values above 50 require a matching
+#                     client patch; a mismatch causes movement desynchronization.
+#        Default:     50.0
+
+SmoothSplineSpeedLimit = 50.0
 
 #
 #    AlwaysMaxSkillForLevel

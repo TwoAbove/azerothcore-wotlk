@@ -709,7 +709,7 @@ void FlightPathMovementGenerator::DoReset(Player* player)
     }
     init.SetFirstPointId(GetCurrentNode());
     init.SetFly();
-    init.SetVelocity(sWorld->getFloatConfig(CONFIG_TAXI_FLIGHT_SPEED));
+    init.SetVelocity(sWorld->getFloatConfig(CONFIG_FLIGHT_PATH_SPEED));
     init.Launch();
 }
 
