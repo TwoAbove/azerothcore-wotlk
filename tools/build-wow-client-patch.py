@@ -23,7 +23,7 @@ SERVER_PRISTINE_DBC = (
 )
 
 SPELL_BASE = 82001
-SPELL_COUNT = 16
+SPELL_COUNT = 22
 ICON_BASE = 4501
 SPELL_INTERRUPT_FLAG_MOVEMENT = 0x1
 AURA_INTERRUPT_FLAG_MOVEMENT = 0x8
@@ -138,7 +138,7 @@ def read_settings(path):
         return int(value)
 
     return {
-        "tempo_duration": integer("TertiaryStats.Tempo.DurationMs", 6000),
+        "tempo_duration": integer("TertiaryStats.Tempo.DurationMs", 8000),
         "tempo_min_cooldown": integer("TertiaryStats.Tempo.MinCooldownMs", 3000),
         "tempo_max_cooldown": integer("TertiaryStats.Tempo.MaxCooldownMs", 30000),
         "momentum_window": integer("TertiaryStats.Fabled.Momentum.WindowMs", 15000),
@@ -165,12 +165,13 @@ def seconds(milliseconds):
 def spell_row(spell_id, name, icon_id, effects=(), auras=(), targets=(), duration=0,
               attributes=0, attributes_ex2=0, amplitudes=(), misc_values=(),
               school=1, damage_class=0, visual=0, aura_tooltip="", range_index=0,
-              stack_amount=0, dispel=0, aura_interrupt_flags=0):
+              stack_amount=0, dispel=0, aura_interrupt_flags=0, attributes_ex3=0):
     row = [0] * SPELL_FIELDS
     row[0] = spell_id
     row[2] = dispel
     row[4] = attributes
     row[6] = attributes_ex2
+    row[7] = attributes_ex3
     row[32] = aura_interrupt_flags
     row[40] = duration
     row[46] = range_index
@@ -202,6 +203,7 @@ def custom_spells(settings):
     cannot_cancel = 0x80000000
     cannot_crit = 0x20000000
     ignore_line_of_sight = 0x00000004
+    suppress_damage_procs = 0x20030000
     return [
         spell_row(82001, "Avoidance", 4501, (6,), (229,), (1,), 21, hidden_passive),
         spell_row(82002, "Fleetfoot", 4502, (6, 6, 6), (129, 130, 58), (1, 1, 1), 21, hidden_passive),
@@ -209,9 +211,8 @@ def custom_spells(settings):
         spell_row(82004, "Siphon", 4503, (10,), (), (1,), attributes_ex2=cannot_crit,
                   school=2, damage_class=1),
         spell_row(82005, "Tempo", 4504, (6, 6, 6), (31, 192, 65), (1, 1, 1), 32,
-                  cannot_cancel, aura_tooltip=("Movement, attack, and casting speed increased by $s1%. "
-                  f"Your next eligible {seconds(settings['tempo_min_cooldown'])}-"
-                  f"{seconds(settings['tempo_max_cooldown'])} sec class ability has its cooldown reduced.")),
+                  cannot_cancel,
+                  aura_tooltip="Movement, attack, casting, and damaging-area tick speed increased by $s1%."),
         spell_row(82006, "Echo", 4505, (2,), (), (6,),
                   attributes_ex2=cannot_crit | ignore_line_of_sight,
                   school=64, damage_class=1, visual=965, range_index=1),
@@ -246,6 +247,26 @@ def custom_spells(settings):
         spell_row(82016, "Leviathan's Gift", 545, (6, 6), (82, 58), (1, 1), 21,
                   cannot_cancel,
                   aura_tooltip="You can breathe underwater and swim $s2% faster."),
+        spell_row(82017, "Blood Debt", 1109, (6,), (226,), (1,), 0,
+                  aura_is_debuff | cannot_cancel, amplitudes=(1000,), school=32,
+                  aura_tooltip="$s1 damage remains and is dealt over the debuff's duration."),
+        spell_row(82018, "Impact", 4501, (2,), (), (6,),
+                  attributes_ex2=cannot_crit | ignore_line_of_sight,
+                  attributes_ex3=suppress_damage_procs,
+                  school=1, damage_class=1, visual=784, range_index=1),
+        spell_row(82019, "Crossfire", 4505, (2,), (), (6,),
+                  attributes_ex2=cannot_crit | ignore_line_of_sight,
+                  attributes_ex3=suppress_damage_procs,
+                  school=1, damage_class=1, visual=0, range_index=1),
+        spell_row(82020, "Vengeful Ghost Exhaustion", 1654),
+        spell_row(82021, "Tempo: Expedite", 4504, (6,), (4,), (1,), 31, cannot_cancel,
+                  aura_tooltip=(f"Your next eligible {seconds(settings['tempo_min_cooldown'])}-"
+                                f"{seconds(settings['tempo_max_cooldown'])} sec class ability "
+                                "has its cooldown reduced.")),
+        spell_row(82022, "Overkill", 4505, (2,), (), (6,),
+                  attributes_ex2=cannot_crit | ignore_line_of_sight,
+                  attributes_ex3=suppress_damage_procs,
+                  school=1, damage_class=1, visual=0, range_index=1),
     ]
 
 
@@ -583,7 +604,7 @@ def main():
     print(f"client movement ChannelInterruptFlags cleared: {channel_divergence}")
     print("Frostbolt 116 InterruptFlags: "
           f"client=0x{frostbolt_client[31]:08x} server=0x{frostbolt_server[31]:08x}")
-    print("tertiary rows: 16 spells, 1 item, 7 custom icons")
+    print(f"tertiary rows: {len(custom_spells(settings))} spells, 1 item, {len(POWER_NAMES)} custom icons")
     print(f"server DBC files: {len(server_patched)}")
     print(f"MPQ files: {len(files)}")
     print(f"wrote {args.out} ({len(archive)} bytes)")
