@@ -1,0 +1,51 @@
+###################################################################################################
+# mod-bot-minds — percept tap + op mailbox (say / state / command)
+#
+#   For each watched bot the module appends first-person-renderable event lines to
+#   <PerceptDir>/<Name>.percepts.jsonl and tails <PerceptDir>/<Name>.ops.jsonl for
+#   ops: say (speech), state (full-state percept), command (playerbots chat command).
+#   Ops written before the module attaches are never replayed.
+###################################################################################################
+
+[worldserver]
+
+#
+#    BotMinds.Enable
+#        Description: Enable the module. With an empty watch list the module stays inert.
+#        Default:     0
+#
+
+BotMinds.Enable = 0
+
+#
+#    BotMinds.Watch
+#        Description: Comma-separated exact character names to watch (case-sensitive).
+#        Default:     ""    (nobody — module inert)
+#
+
+BotMinds.Watch = ""
+
+#
+#    BotMinds.PerceptDir
+#        Description: Directory for percept/ops JSONL files. Created if missing.
+#        Default:     "/home/twoabove/wow/percepts"
+#
+
+BotMinds.PerceptDir = "/home/twoabove/wow/percepts"
+
+#
+#    BotMinds.PulseMinutes
+#        Description: Minutes between periodic "pulse" snapshots (level/position/hp/money/bags).
+#                     Set to 0 to disable pulses.
+#        Default:     5
+#
+
+BotMinds.PulseMinutes = 5
+
+#
+#    BotMinds.OpsPollMs
+#        Description: IO worker cadence in ms (percept flush + ops tail). Min 100.
+#        Default:     500
+#
+
+BotMinds.OpsPollMs = 500

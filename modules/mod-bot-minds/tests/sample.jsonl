@@ -1,0 +1,24 @@
+{"t":1751980000000,"bot":"Thargrim","kind":"pulse","level":14,"hp_pct":100,"money":23412,"zone":"Elwynn Forest","area":"Goldshire","x":-9459.3,"y":62.1,"z":56.3,"map":0,"bag_free":34}
+{"t":1751980005000,"bot":"Thargrim","kind":"zone","zone":"Elwynn Forest","area":"Crystal Lake"}
+{"t":1751980010000,"bot":"Thargrim","kind":"combat","status":"start","enemy":"Murloc Forager"}
+{"t":1751980012000,"bot":"Thargrim","kind":"xp","amount":95,"from":"Murloc Forager","source":0}
+{"t":1751980012100,"bot":"Thargrim","kind":"kill","victim":"Murloc Forager","victim_level":12}
+{"t":1751980015000,"bot":"Thargrim","kind":"xp","amount":110,"from":"Murloc Netter","source":0}
+{"t":1751980015100,"bot":"Thargrim","kind":"kill","victim":"Murloc Netter","victim_level":13}
+{"t":1751980016000,"bot":"Thargrim","kind":"combat","status":"end","seconds":6,"kills":2,"hp_pct":81}
+{"t":1751980020000,"bot":"Thargrim","kind":"loot","item":"Linen Cloth","count":2,"quality":1}
+{"t":1751980021000,"bot":"Thargrim","kind":"loot","item":"Linen Cloth","count":1,"quality":1}
+{"t":1751980022000,"bot":"Thargrim","kind":"loot","item":"Sharp Murloc Tooth","count":1,"quality":0}
+{"t":1751980030000,"bot":"Thargrim","kind":"money","delta":153,"total":23565}
+{"t":1751980031000,"bot":"Thargrim","kind":"money","delta":47,"total":23612}
+{"t":1751980040000,"bot":"Thargrim","kind":"chat","channel":"say","from":"Grimzo","text":"anyone seen the murloc camp?"}
+{"t":1751980045000,"bot":"Thargrim","kind":"chat","channel":"whisper","from":"Grimzo","text":"psst, got any linen?"}
+{"t":1751980050000,"bot":"Thargrim","kind":"task","status":"rejected","text":"{\"op\":\"dance\"}","reason":"unsupported in v0"}
+{"t":1751980055000,"bot":"Thargrim","kind":"quest","status":"accepted","title":"Fear No Evil","id":28809}
+{"t":1751980060000,"bot":"Thargrim","kind":"level","from":14,"to":15}
+{"t":1751980065000,"bot":"Thargrim","kind":"death","zone":"Crystal Lake","killer":"Murloc Warrior"}
+{"t":1751980070000,"bot":"Thargrim","kind":"resurrect","zone":"Goldshire"}
+{"t":1751980085000,"bot":"Thargrim","kind":"act","action":"say","ok":true,"detail":"say"}
+{"t":1751980090000,"bot":"Thargrim","kind":"chat","channel":"say","from":"Thargrim","text":"Fine day for fishing."}
+{"t":1751980095000,"bot":"Thargrim","kind":"invite","from":"Grimzo"}
+{"t":1751980096000,"bot":"Thargrim","kind":"tell","text":"Cannot cast Blessing of Kings on Grimzo — they are 812 yards away, far out of range"}
