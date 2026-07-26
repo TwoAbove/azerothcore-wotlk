@@ -1,0 +1,10 @@
+## Interface: 30300
+## Title: Tertiary Stats
+## Notes: Stable tertiary item details and equipped-slot comparisons.
+## Author: Twoabove
+## Version: 1.3.0
+
+libs\LibStub\LibStub.lua
+libs\LibQTip-1.0\LibQTip-1.0.lua
+
+TertiaryStatsUI.lua

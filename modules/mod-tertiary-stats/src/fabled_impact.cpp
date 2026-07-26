@@ -1,0 +1,227 @@
+/*
+ * mod-tertiary-stats: fabled effect "Impact".
+ */
+#include "fabled.h"
+#include "fabled_test_utils.h"
+
+#include "Cell.h"
+#include "CellImpl.h"
+#include "Creature.h"
+#include "GridNotifiers.h"
+#include "Player.h"
+#include "SharedDefines.h"
+#include "test_harness.h"
+
+#include <list>
+#include <memory>
+#include <string>
+
+namespace Fabled
+{
+namespace
+{
+class ImpactScript final : public Script
+{
+public:
+    ImpactScript() : Script(Effect::Impact) { }
+
+    void OnEnvironmentalDamage(Player* player, Runtime& /*runtime*/, uint8 type, uint32& damage) override
+    {
+        if (type != DAMAGE_FALL || !damage)
+            return;
+
+        uint32 preventedDamage = damage;
+        damage = 0;
+
+        float radius = GetSettings().impactRadiusYd;
+        std::list<Unit*> nearby;
+        Acore::AnyUnfriendlyUnitInObjectRangeCheck check(player, player, radius);
+        Acore::UnitListSearcher<Acore::AnyUnfriendlyUnitInObjectRangeCheck> searcher(player, nearby, check);
+        Cell::VisitObjects(player, searcher, radius);
+
+        for (Unit* target : nearby)
+        {
+            if (player->IsFriendlyTo(target))
+                continue;
+
+            DealEffectDamage(player, target, preventedDamage, SPELL_SCHOOL_MASK_NORMAL,
+                SPELL_IMPACT_DAMAGE);
+        }
+    }
+};
+
+class ImpactTestSuite final : public TestHarness::Suite
+{
+public:
+    void Start(TestHarness::Context& context) override
+    {
+        _savedSettings = GetSettings();
+        _settingsSaved = true;
+        MutableSettings().impactRadiusYd = 20.0f;
+
+        Player* actor = context.GetActor();
+        context.Expect(actor != nullptr, "headless actor available");
+        context.Expect(IsReady(), "fabled custom spell gate is ready");
+        if (!actor || !IsReady())
+        {
+            Finish(context);
+            return;
+        }
+
+        _equipped = Test::EquipFabledTrinket(actor, Effect::Impact) != nullptr;
+        context.Expect(_equipped, "Impact fabled trinket equipped");
+        if (!_equipped)
+        {
+            Finish(context);
+            return;
+        }
+
+        Creature* first = context.SpawnDummy(3.0f, 0.0f);
+        Creature* second = context.SpawnDummy(6.0f, 1.5f);
+        bool firstEngaged = first && context.Engage(first->GetGUID());
+        bool secondEngaged = second && context.Engage(second->GetGUID());
+        context.Expect(firstEngaged && secondEngaged,
+            "two hostile targets are engaged inside the Impact radius");
+        if (!firstEngaged || !secondEngaged)
+        {
+            Finish(context);
+            return;
+        }
+
+        _firstGuid = first->GetGUID();
+        _secondGuid = second->GetGUID();
+        _stage = Stage::Fall;
+        _elapsedMs = 0;
+    }
+
+    void Update(TestHarness::Context& context, uint32 diff) override
+    {
+        if (_stage == Stage::Done)
+            return;
+
+        _elapsedMs += diff;
+
+        Player* actor = context.GetActor();
+        Creature* first = context.GetCreature(_firstGuid);
+        Creature* second = context.GetCreature(_secondGuid);
+        if (!actor || !first || !second)
+        {
+            context.Fail("Impact test objects remain available");
+            Finish(context);
+            return;
+        }
+
+        if (_stage == Stage::Fall)
+        {
+            if (_elapsedMs < 100)
+                return;
+            _elapsedMs = 0;
+            constexpr uint32 FALL_DAMAGE = 1234;
+            actor->SetHealth(actor->GetMaxHealth());
+            uint32 actorHealthBefore = actor->GetHealth();
+            _firstHealthBefore = first->GetHealth();
+            _secondHealthBefore = second->GetHealth();
+
+            uint32 dealtToActor = actor->EnvironmentalDamage(DAMAGE_FALL, FALL_DAMAGE);
+
+            context.Expect(dealtToActor == 0 && actor->GetHealth() == actorHealthBefore,
+                "Impact prevents all fall damage",
+                "reported=" + std::to_string(dealtToActor)
+                    + ",before=" + std::to_string(actorHealthBefore)
+                    + ",after=" + std::to_string(actor->GetHealth()));
+            _stage = Stage::AwaitImpact;
+            _elapsedMs = 0;
+            return;
+        }
+
+        if (_stage == Stage::AwaitImpact)
+        {
+            if ((first->GetHealth() >= _firstHealthBefore
+                    || second->GetHealth() >= _secondHealthBefore)
+                && _elapsedMs < 2000)
+                return;
+            context.Expect(first->GetHealth() < _firstHealthBefore,
+                "Impact sends the first target through native physical damage resolution",
+                "before=" + std::to_string(_firstHealthBefore)
+                    + ",after=" + std::to_string(first->GetHealth()));
+            context.Expect(second->GetHealth() < _secondHealthBefore,
+                "Impact sends the second target through native physical damage resolution",
+                "before=" + std::to_string(_secondHealthBefore)
+                    + ",after=" + std::to_string(second->GetHealth()));
+            _stage = Stage::Lava;
+            return;
+        }
+
+        uint32 firstHealthBefore = first->GetHealth();
+        uint32 secondHealthBefore = second->GetHealth();
+        actor->SetHealth(actor->GetMaxHealth());
+        actor->EnvironmentalDamage(DAMAGE_LAVA, 321);
+        context.Expect(first->GetHealth() == firstHealthBefore && second->GetHealth() == secondHealthBefore,
+            "Impact does not redirect non-fall environmental damage",
+            "firstBefore=" + std::to_string(firstHealthBefore)
+                + ",firstAfter=" + std::to_string(first->GetHealth())
+                + ",secondBefore=" + std::to_string(secondHealthBefore)
+                + ",secondAfter=" + std::to_string(second->GetHealth()));
+        Finish(context);
+    }
+
+    void Cancel(TestHarness::Context& context) override
+    {
+        Cleanup(context);
+    }
+
+private:
+    enum class Stage
+    {
+        Fall,
+        AwaitImpact,
+        Lava,
+        Done
+    };
+
+    void Cleanup(TestHarness::Context& context)
+    {
+        if (Player* actor = context.GetActor())
+        {
+            actor->SetHealth(actor->GetMaxHealth());
+            if (_equipped)
+                Test::UnequipFabled(actor, Effect::Impact);
+        }
+        _equipped = false;
+
+        context.DespawnAllDummies();
+        if (_settingsSaved)
+        {
+            MutableSettings() = _savedSettings;
+            _settingsSaved = false;
+        }
+    }
+
+    void Finish(TestHarness::Context& context)
+    {
+        Cleanup(context);
+        _stage = Stage::Done;
+        context.Finish();
+    }
+
+    Settings _savedSettings;
+    ObjectGuid _firstGuid;
+    ObjectGuid _secondGuid;
+    Stage _stage = Stage::Done;
+    uint32 _elapsedMs = 0;
+    bool _settingsSaved = false;
+    uint32 _firstHealthBefore = 0;
+    uint32 _secondHealthBefore = 0;
+    bool _equipped = false;
+};
+} // namespace
+
+std::unique_ptr<Script> MakeImpact()
+{
+    TestHarness::RegisterSuite("fabled-impact", []
+    {
+        return std::make_unique<ImpactTestSuite>();
+    });
+    return std::make_unique<ImpactScript>();
+}
+} // namespace Fabled
