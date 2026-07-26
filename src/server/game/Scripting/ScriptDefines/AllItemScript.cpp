@@ -142,10 +142,23 @@ void ScriptMgr::OnGossipSelectCode(Player* player, Item* item, uint32 sender, ui
     }
 }
 
-AllItemScript::AllItemScript(char const* name) :
-    ScriptObject(name)
+void ScriptMgr::OnItemBonusSeedGenerate(ItemTemplate const* proto, uint32 entropy, uint32& bonusSeed)
 {
-    ScriptRegistry<AllItemScript>::AddScript(this);
+    ASSERT(proto);
+
+    CALL_ENABLED_HOOKS(AllItemScript, ITEMHOOK_ON_ITEM_BONUS_SEED_GENERATE,
+        script->OnItemBonusSeedGenerate(proto, entropy, bonusSeed));
+}
+
+AllItemScript::AllItemScript(const char* name, std::vector<uint16> enabledHooks) :
+    ScriptObject(name, ITEMHOOK_END)
+{
+    // If empty - enable all available hooks.
+    if (enabledHooks.empty())
+        for (uint16 i = 0; i < ITEMHOOK_END; ++i)
+            enabledHooks.emplace_back(i);
+
+    ScriptRegistry<AllItemScript>::AddScript(this, std::move(enabledHooks));
 }
 
 ItemScript::ItemScript(char const* name) :

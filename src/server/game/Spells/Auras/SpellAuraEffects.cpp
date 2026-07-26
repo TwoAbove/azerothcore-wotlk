@@ -1100,6 +1100,8 @@ float AuraEffect::CalcPeriodicCritChance(Unit const* caster, Unit const* target)
     if (target && critChance > 0.0f)
         critChance = target->SpellTakenCritChance(caster, GetSpellInfo(), GetSpellInfo()->GetSchoolMask(), critChance, BASE_ATTACK, true);
 
+    sScriptMgr->OnCalcPeriodicCritChance(GetSpellInfo(), caster, target, critChance);
+
     return std::max(0.0f, critChance);
 }
 
@@ -6661,8 +6663,7 @@ void AuraEffect::HandlePeriodicHealAurasTick(Unit* target, Unit* caster) const
 
     HealInfo healInfo(caster, target, heal, GetSpellInfo(), GetSpellInfo()->GetSchoolMask());
     Unit::CalcHealAbsorb(healInfo);
-    int32 gain = Unit::DealHeal(caster, target, healInfo.GetHeal());
-    healInfo.SetEffectiveHeal(gain);
+    int32 gain = Unit::DealHeal(healInfo);
 
     SpellPeriodicAuraLogInfo pInfo(this, healInfo.GetHeal(), healInfo.GetHeal() - healInfo.GetEffectiveHeal(), healInfo.GetAbsorb(), 0, 0.0f, crit);
     target->SendPeriodicAuraLog(&pInfo);

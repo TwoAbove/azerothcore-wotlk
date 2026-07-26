@@ -121,7 +121,7 @@ void MailDraft::prepareItems(Player* receiver, CharacterDatabaseTransaction tran
     {
         if (LootItem* lootitem = mailLoot.LootItemInSlot(i, receiver))
         {
-            if (Item* item = Item::CreateItem(lootitem->itemid, lootitem->count, receiver))
+            if (Item* item = Item::CreateItem(lootitem->itemid, lootitem->count, receiver, false, lootitem->randomPropertyId, false, lootitem->bonusSeed))
             {
                 item->SaveToDB(trans);                           // save for prevent lost at next mail load, if send fail then item will deleted
                 AddItem(item);
@@ -138,9 +138,7 @@ void MailDraft::deleteIncludedItems(CharacterDatabaseTransaction trans, bool inD
 
         if (inDB)
         {
-            CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_ITEM_INSTANCE);
-            stmt->SetData(0, item->GetGUID().GetCounter());
-            trans->Append(stmt);
+            Item::DeleteFromDB(trans, item->GetGUID().GetCounter());
         }
 
         delete item;

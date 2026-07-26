@@ -50,6 +50,13 @@ public:
     virtual void OnCreatureRemoveWorld(Creature* /*creature*/) { }
 
     /**
+     * @brief This hook runs before a creature corpse and its loot are removed.
+     *
+     * @param creature Contains information about the Creature
+     */
+    virtual void OnBeforeCreatureRemoveCorpse(Creature* /*creature*/) { }
+
+    /**
      * @brief This hook runs after creature has been saved to DB
      *
      * @param creature Contains information about the Creature

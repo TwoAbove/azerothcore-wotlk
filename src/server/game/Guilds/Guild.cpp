@@ -389,9 +389,9 @@ void Guild::BankTab::LoadFromDB(Field* fields)
 
 bool Guild::BankTab::LoadItemFromDB(Field* fields)
 {
-    uint8 slotId = fields[13].Get<uint8>();
-    ObjectGuid::LowType itemGuid = fields[14].Get<uint32>();
-    uint32 itemEntry = fields[15].Get<uint32>();
+    uint8 slotId = fields[14].Get<uint8>();
+    ObjectGuid::LowType itemGuid = fields[15].Get<uint32>();
+    uint32 itemEntry = fields[16].Get<uint32>();
     if (slotId >= GUILD_BANK_MAX_SLOTS)
     {
         LOG_ERROR("guild", "Invalid slot for item (GUID: {}, id: {}) in guild bank, skipped.", itemGuid, itemEntry);
@@ -2086,11 +2086,11 @@ void Guild::LoadBankTabFromDB(Field* fields)
 
 bool Guild::LoadBankItemFromDB(Field* fields)
 {
-    uint8 tabId = fields[12].Get<uint8>();
+    uint8 tabId = fields[13].Get<uint8>();
     if (tabId >= _GetPurchasedTabsSize())
     {
         LOG_ERROR("guild", "Invalid tab for item (GUID: {}, id: #{}) in guild bank, skipped.",
-            fields[14].Get<uint32>(), fields[15].Get<uint32>());
+            fields[15].Get<uint32>(), fields[16].Get<uint32>());
         return false;
     }
     return m_bankTabs[tabId].LoadItemFromDB(fields);
@@ -2588,6 +2588,11 @@ inline std::string Guild::_GetRankName(uint8 rankId) const
     return "<unknown>";
 }
 
+std::string Guild::GetRankName(uint8 rankId) const
+{
+    return _GetRankName(rankId);
+}
+
 uint32 Guild::GetRankRights(uint8 rankId) const
 {
     if (RankInfo const* rankInfo = GetRankInfo(rankId))
@@ -2939,7 +2944,7 @@ void Guild::_SendBankList(WorldSession* session /* = nullptr*/, uint8 tabId /*= 
                         itemInfo.EnchantmentID = int32(tabItem->GetEnchantmentId(PERM_ENCHANTMENT_SLOT));
                         itemInfo.Flags = tabItem->GetInt32Value(ITEM_FIELD_FLAGS);
                         itemInfo.RandomPropertiesID = tabItem->GetItemRandomPropertyId();
-                        itemInfo.RandomPropertiesSeed = int32(tabItem->GetItemSuffixFactor());
+                        itemInfo.RandomPropertiesSeed = int32(tabItem->GetItemPropertySeed());
 
                         for (uint32 socketSlot = 0; socketSlot < MAX_GEM_SOCKETS; ++socketSlot)
                         {

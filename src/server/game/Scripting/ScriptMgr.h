@@ -226,7 +226,8 @@ public: /* ItemScript */
     bool OnItemRemove(Player* player, Item* item);
     bool OnCastItemCombatSpell(Player* player, Unit* victim, SpellInfo const* spellInfo, Item* item);
     void OnGossipSelect(Player* player, Item* item, uint32 sender, uint32 action);
-    void OnGossipSelectCode(Player* player, Item* item, uint32 sender, uint32 action, char const* code);
+    void OnGossipSelectCode(Player* player, Item* item, uint32 sender, uint32 action, const char* code);
+    void OnItemBonusSeedGenerate(ItemTemplate const* proto, uint32 entropy, uint32& bonusSeed);
 
 public: /* CreatureScript */
     bool OnGossipHello(Player* player, Creature* creature);
@@ -241,6 +242,7 @@ public: /* CreatureScript */
     void OnCreatureUpdate(Creature* creature, uint32 diff);
     void OnCreatureAddWorld(Creature* creature);
     void OnCreatureRemoveWorld(Creature* creature);
+    void OnBeforeCreatureRemoveCorpse(Creature* creature);
     void OnFfaPvpStateUpdate(Creature* creature, bool InPvp);
 
 public: /* GameObjectScript */
@@ -334,6 +336,8 @@ public: /* PlayerScript */
     void OnPlayerMoneyChanged(Player* player, int32& amount);
     void OnPlayerBeforeLootMoney(Player* player, Loot* loot);
     void OnPlayerBeforeSendLoot(Player* player, ObjectGuid lootGuid, Loot* loot);
+    void OnPlayerAfterSendAuctionList(Player* player, uint8 listType,
+        std::vector<uint32> const& itemBonusSeeds);
     void OnPlayerGiveXP(Player* player, uint32& amount, Unit* victim, uint8 xpSource);
     bool OnPlayerReputationChange(Player* player, uint32 factionID, int32& standing, bool incremental);
     void OnPlayerReputationRankChange(Player* player, uint32 factionID, ReputationRank newRank, ReputationRank oldRank, bool increased);
@@ -390,6 +394,10 @@ public: /* PlayerScript */
     bool OnPlayerBeforeQuestComplete(Player* player, uint32 quest_id);
     void OnPlayerQuestComputeXP(Player* player, Quest const* quest, uint32& xpValue);
     void OnPlayerBeforeDurabilityRepair(Player* player, ObjectGuid npcGUID, ObjectGuid itemGUID, float& discountMod, uint8 guildBank);
+    void OnPlayerEnvironmentalDamage(Player* player, uint8 type, uint32& damage);
+    bool CanItemLoseDurability(Player* player, Item* item);
+    bool CanAttackWhileMounted(Player* player, Unit* victim, bool meleeAttack);
+    bool CanUseGameObjectWhileMounted(Player* player, GameObject* gameObject);
     void OnPlayerBeforeBuyItemFromVendor(Player* player, ObjectGuid vendorguid, uint32 vendorslot, uint32& item, uint8 count, uint8 bag, uint8 slot);
     void OnPlayerBeforeStoreOrEquipNewItem(Player* player, uint32 vendorslot, uint32& item, uint8 count, uint8 bag, uint8 slot, ItemTemplate const* pProto, Creature* pVendor, VendorItem const* crItem, bool bStore);
     void OnPlayerAfterStoreOrEquipNewItem(Player* player, uint32 vendorslot, Item* item, uint8 count, uint8 bag, uint8 slot, ItemTemplate const* pProto, Creature* pVendor, VendorItem const* crItem, bool bStore);
@@ -566,14 +574,17 @@ public: /* Scheduled scripts */
     bool IsScriptScheduled() const { return _scheduledScripts > 0; }
 
 public: /* UnitScript */
-    void OnHeal(Unit* healer, Unit* reciever, uint32& gain);
+    void OnHealFinal(HealInfo const& healInfo);
     void OnDamage(Unit* attacker, Unit* victim, uint32& damage);
+    void ModifyDamageFinal(Unit* attacker, Unit* victim, uint32& damage, DamageEffectType damageType, SpellInfo const* spellInfo, Spell const* damageSpell);
+    void OnDamageFinal(Unit* attacker, Unit* victim, uint32 damage, DamageEffectType damageType, SpellInfo const* spellInfo, Spell const* damageSpell);
     void ModifyPeriodicDamageAurasTick(Unit* target, Unit* attacker, uint32& damage, SpellInfo const* spellInfo);
     void ModifyMeleeDamage(Unit* target, Unit* attacker, uint32& damage);
     void ModifySpellDamageTaken(Unit* target, Unit* attacker, int32& damage, SpellInfo const* spellInfo);
     void ModifyHealReceived(Unit* target, Unit* healer, uint32& addHealth, SpellInfo const* spellInfo);
     uint32 DealDamage(Unit* AttackerUnit, Unit* pVictim, uint32 damage, DamageEffectType damagetype);
     void OnBeforeRollMeleeOutcomeAgainst(Unit const* attacker, Unit const* victim, WeaponAttackType attType, int32& attackerMaxSkillValueForLevel, int32& victimMaxSkillValueForLevel, int32& attackerWeaponSkill, int32& victimDefenseSkill, int32& crit_chance, int32& miss_chance, int32& dodge_chance, int32& parry_chance, int32& block_chance);
+    void ModifyAuraEffectMask(Unit* unit, Aura* aura, uint8& effectMask);
     void OnAuraApply(Unit* /*unit*/, Aura* /*aura*/);
     void OnAuraRemove(Unit* unit, AuraApplication* aurApp, AuraRemoveMode mode);
     bool IfNormalReaction(Unit const* unit, Unit const* target, ReputationRank& repRank);
@@ -647,7 +658,13 @@ public: /* Arena Team Script */
 
 public: /* SpellSC */
     void OnCalcMaxDuration(Aura const* aura, int32& maxDuration);
+    void OnCalcCritChance(Spell* spell, Unit* target, float& critChance);
+    void OnCalcPeriodicCritChance(SpellInfo const* spellInfo, Unit const* caster,
+        Unit const* target, float& critChance);
     void OnSpellCheckCast(Spell* spell, bool strict, SpellCastResult& res);
+    bool CanCastWithInsufficientPower(Spell const* spell);
+    bool CanCastWhileMoving(Spell const* spell);
+    bool CanCastWhileMounted(Spell const* spell);
     bool CanPrepare(Spell* spell, SpellCastTargets const* targets, AuraEffect const* triggeredByAura);
     bool CanScalingEverything(Spell* spell);
     bool CanSelectSpecTalent(Spell* spell);
@@ -660,6 +677,7 @@ public: /* SpellSC */
     void OnSpellCastCancel(Spell* spell, Unit* caster, SpellInfo const* spellInfo, bool bySelf);
     void OnSpellCast(Spell* spell, Unit* caster, SpellInfo const* spellInfo, bool skipCheck);
     void OnSpellPrepare(Spell* spell, Unit* caster, SpellInfo const* spellInfo);
+    void OnCalculatePowerCost(Spell* spell, int32& powerCost);
 
 public: /* GameEventScript */
     void OnGameEventStart(uint16 EventID);

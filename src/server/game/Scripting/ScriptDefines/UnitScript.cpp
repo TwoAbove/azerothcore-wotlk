@@ -19,15 +19,29 @@
 #include "ScriptMgr.h"
 #include "ScriptMgrMacros.h"
 
-void ScriptMgr::OnHeal(Unit* healer, Unit* reciever, uint32& gain)
+void ScriptMgr::OnHealFinal(HealInfo const& healInfo)
 {
-    CALL_ENABLED_HOOKS(UnitScript, UNITHOOK_ON_HEAL, script->OnHeal(healer, reciever, gain));
+    CALL_ENABLED_HOOKS(UnitScript, UNITHOOK_ON_HEAL_FINAL, script->OnHealFinal(healInfo));
 }
 
 void ScriptMgr::OnDamage(Unit* attacker, Unit* victim, uint32& damage)
 {
     CALL_ENABLED_HOOKS(UnitScript, UNITHOOK_ON_DAMAGE, script->OnDamage(attacker, victim, damage));
 }
+void ScriptMgr::ModifyDamageFinal(Unit* attacker, Unit* victim, uint32& damage,
+    DamageEffectType damageType, SpellInfo const* spellInfo, Spell const* damageSpell)
+{
+    CALL_ENABLED_HOOKS(UnitScript, UNITHOOK_MODIFY_DAMAGE_FINAL,
+        script->ModifyDamageFinal(attacker, victim, damage, damageType, spellInfo, damageSpell));
+}
+
+void ScriptMgr::OnDamageFinal(Unit* attacker, Unit* victim, uint32 damage,
+    DamageEffectType damageType, SpellInfo const* spellInfo, Spell const* damageSpell)
+{
+    CALL_ENABLED_HOOKS(UnitScript, UNITHOOK_ON_DAMAGE_FINAL,
+        script->OnDamageFinal(attacker, victim, damage, damageType, spellInfo, damageSpell));
+}
+
 
 void ScriptMgr::ModifyPeriodicDamageAurasTick(Unit* target, Unit* attacker, uint32& damage, SpellInfo const* spellInfo)
 {
@@ -67,6 +81,12 @@ uint32 ScriptMgr::DealDamage(Unit* AttackerUnit, Unit* pVictim, uint32 damage, D
 void ScriptMgr::OnBeforeRollMeleeOutcomeAgainst(Unit const* attacker, Unit const* victim, WeaponAttackType attType, int32& attackerMaxSkillValueForLevel, int32& victimMaxSkillValueForLevel, int32& attackerWeaponSkill, int32& victimDefenseSkill, int32& crit_chance, int32& miss_chance, int32& dodge_chance, int32& parry_chance, int32& block_chance)
 {
     CALL_ENABLED_HOOKS(UnitScript, UNITHOOK_ON_BEFORE_ROLL_MELEE_OUTCOME_AGAINST, script->OnBeforeRollMeleeOutcomeAgainst(attacker, victim, attType, attackerMaxSkillValueForLevel, victimMaxSkillValueForLevel, attackerWeaponSkill, victimDefenseSkill, crit_chance, miss_chance, dodge_chance, parry_chance, block_chance));
+}
+
+void ScriptMgr::ModifyAuraEffectMask(Unit* unit, Aura* aura, uint8& effectMask)
+{
+    CALL_ENABLED_HOOKS(UnitScript, UNITHOOK_MODIFY_AURA_EFFECT_MASK,
+        script->ModifyAuraEffectMask(unit, aura, effectMask));
 }
 
 void ScriptMgr::OnAuraApply(Unit* unit, Aura* aura)

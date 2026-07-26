@@ -27,6 +27,7 @@ CREATE TABLE `item_loot_storage` (
   `item_index` int unsigned NOT NULL DEFAULT '0',
   `randomPropertyId` int NOT NULL,
   `randomSuffix` int unsigned NOT NULL,
+  `bonusSeed` int unsigned NOT NULL DEFAULT '0',
   `follow_loot_rules` tinyint unsigned NOT NULL,
   `freeforall` tinyint unsigned NOT NULL,
   `is_blocked` tinyint unsigned NOT NULL,

@@ -2628,20 +2628,20 @@ void Player::RemoveAmmo()
         UpdateDamagePhysical(RANGED_ATTACK);
 }
 
-Item* Player::StoreNewItem(ItemPosCountVec const& dest, uint32 item, bool update, int32 randomPropertyId, bool refund)
+Item* Player::StoreNewItem(ItemPosCountVec const& dest, uint32 item, bool update, int32 randomPropertyId, bool refund, uint32 bonusSeed)
 {
     AllowedLooterSet allowedLooters;
-    return StoreNewItem(dest, item, update, randomPropertyId, allowedLooters, refund);
+    return StoreNewItem(dest, item, update, randomPropertyId, allowedLooters, refund, bonusSeed);
 }
 
 // Return stored item (if stored to stack, it can diff. from pItem). And pItem ca be deleted in this case.
-Item* Player::StoreNewItem(ItemPosCountVec const& dest, uint32 item, bool update, int32 randomPropertyId, AllowedLooterSet& allowedLooters, bool refund)
+Item* Player::StoreNewItem(ItemPosCountVec const& dest, uint32 item, bool update, int32 randomPropertyId, AllowedLooterSet& allowedLooters, bool refund, uint32 bonusSeed)
 {
     uint32 count = 0;
     for (ItemPosCountVec::const_iterator itr = dest.begin(); itr != dest.end(); ++itr)
         count += itr->count;
 
-    Item* pItem = Item::CreateItem(item, count, this, false, randomPropertyId);
+    Item* pItem = Item::CreateItem(item, count, this, false, randomPropertyId, false, bonusSeed);
     if (pItem)
     {
         // pussywizard: obtaining blue or better items saves to db
@@ -4859,7 +4859,7 @@ void Player::SendNewItem(Item* item, uint32 count, bool received, bool created, 
     // item slot, but when added to stack: 0xFFFFFFFF
     data << uint32((item->GetCount() == count) ? item->GetSlot() : -1);
     data << uint32(item->GetEntry());                       // item id
-    data << uint32(item->GetItemSuffixFactor());            // SuffixFactor
+    data << uint32(item->GetItemPropertySeed());             // SuffixFactor
     data << int32(item->GetItemRandomPropertyId());         // random item property id
     data << uint32(count);                                  // count of items
     data << uint32(GetItemCount(item->GetEntry()));         // count of items in inventory
@@ -5974,8 +5974,8 @@ void Player::_LoadInventory(PreparedQueryResult result, uint32 timeDiff)
             Field* fields = result->Fetch();
             if (Item* item = _LoadItem(trans, zoneId, timeDiff, fields))
             {
-                ObjectGuid::LowType bagGuid  = fields[11].Get<uint32>();
-                uint8  slot     = fields[12].Get<uint8>();
+                ObjectGuid::LowType bagGuid  = fields[12].Get<uint32>();
+                uint8  slot     = fields[13].Get<uint8>();
 
                 uint8 err = EQUIP_ERR_OK;
                 // Item is not in bag
@@ -6085,8 +6085,8 @@ void Player::_LoadInventory(PreparedQueryResult result, uint32 timeDiff)
 Item* Player::_LoadItem(CharacterDatabaseTransaction trans, uint32 zoneId, uint32 timeDiff, Field* fields)
 {
     Item* item = nullptr;
-    ObjectGuid::LowType itemGuid  = fields[13].Get<uint32>();
-    uint32 itemEntry = fields[14].Get<uint32>();
+    ObjectGuid::LowType itemGuid  = fields[14].Get<uint32>();
+    uint32 itemEntry = fields[15].Get<uint32>();
     if (ItemTemplate const* proto = sObjectMgr->GetItemTemplate(itemEntry))
     {
         bool remove = false;
@@ -6220,8 +6220,8 @@ Item* Player::_LoadItem(CharacterDatabaseTransaction trans, uint32 zoneId, uint3
 // load mailed item which should receive current player
 Item* Player::_LoadMailedItem(ObjectGuid const& playerGuid, Player* player, uint32 mailId, Mail* mail, Field* fields)
 {
-    ObjectGuid::LowType itemGuid = fields[11].Get<uint32>();
-    uint32 itemEntry = fields[12].Get<uint32>();
+    ObjectGuid::LowType itemGuid = fields[12].Get<uint32>();
+    uint32 itemEntry = fields[13].Get<uint32>();
 
     ItemTemplate const* proto = sObjectMgr->GetItemTemplate(itemEntry);
     if (!proto)
@@ -6241,7 +6241,7 @@ Item* Player::_LoadMailedItem(ObjectGuid const& playerGuid, Player* player, uint
 
     Item* item = NewItemOrBag(proto);
 
-    ObjectGuid ownerGuid = fields[13].Get<uint32>() ? ObjectGuid::Create<HighGuid::Player>(fields[13].Get<uint32>()) : ObjectGuid::Empty;
+    ObjectGuid ownerGuid = fields[14].Get<uint32>() ? ObjectGuid::Create<HighGuid::Player>(fields[14].Get<uint32>()) : ObjectGuid::Empty;
     if (!item->LoadFromDB(itemGuid, ownerGuid, fields, itemEntry))
     {
         LOG_ERROR("entities.player", "Player::_LoadMailedItems: Item (GUID: {}) in mail ({}) doesn't exist, deleted from mail.", itemGuid, mailId);
@@ -7435,9 +7435,7 @@ void Player::_SaveInventory(CharacterDatabaseTransaction trans)
         stmt->SetData(0, item->GetGUID().GetCounter());
         trans->Append(stmt);
 
-        stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_ITEM_INSTANCE);
-        stmt->SetData(0, item->GetGUID().GetCounter());
-        trans->Append(stmt);
+        Item::DeleteFromDB(trans, item->GetGUID().GetCounter());
         m_items[i]->FSetState(ITEM_NEW);
 
         // Xinef: item is removed, remove loot from storage if any
@@ -7593,9 +7591,7 @@ void Player::_SaveMail(CharacterDatabaseTransaction trans)
             {
                 for (MailItemInfoVec::iterator itr2 = m->items.begin(); itr2 != m->items.end(); ++itr2)
                 {
-                    stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_ITEM_INSTANCE);
-                    stmt->SetData(0, itr2->item_guid);
-                    trans->Append(stmt);
+                    Item::DeleteFromDB(trans, itr2->item_guid);
                 }
             }
             stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_MAIL_BY_ID);

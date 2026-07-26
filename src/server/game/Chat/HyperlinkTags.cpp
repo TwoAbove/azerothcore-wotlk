@@ -181,7 +181,8 @@ bool Acore::Hyperlinks::LinkTags::item::StoreTo(ItemLinkData& val, std::string_v
         val.RandomProperty = nullptr;
     }
 
-    if ((val.RandomSuffix && !val.RandomSuffixBaseAmount) || (val.RandomSuffixBaseAmount && !val.RandomSuffix))
+    uint32 suffixFactor = val.RandomSuffixBaseAmount;
+    if ((val.RandomSuffix && !suffixFactor) || (suffixFactor && !val.RandomSuffix))
         return false;
 
     return true;

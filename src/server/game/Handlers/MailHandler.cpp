@@ -775,7 +775,7 @@ void WorldSession::HandleGetMailList(WorldPacket& recvData)
             // can be negative
             data << int32((item ? item->GetItemRandomPropertyId() : 0));
             // unk
-            data << uint32((item ? item->GetItemSuffixFactor() : 0));
+            data << uint32((item ? item->GetItemPropertySeed() : 0));
             // stack count
             data << uint32((item ? item->GetCount() : 0));
             // charges

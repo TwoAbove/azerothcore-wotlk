@@ -21,6 +21,7 @@
 #include "DBCStores.h"
 #include "GameTime.h"
 #include "Player.h"
+#include "ScriptMgr.h"
 
 AuctionHouseWorkerThread::AuctionHouseWorkerThread(ProducerConsumerQueue<AuctionSearcherRequest*>* requestQueue, MPSCQueue<AuctionSearcherResponse>* responseQueue)
 {
@@ -146,6 +147,7 @@ void AuctionHouseWorkerThread::SearchListRequest(AuctionSearchListRequest const&
 
     AuctionSearcherResponse* searchResponse = new AuctionSearcherResponse();
     searchResponse->playerGuid = searchListRequest.playerInfo.playerGuid;
+    searchResponse->listType = 0;
     searchResponse->packet.Initialize(SMSG_AUCTION_LIST_RESULT, (4 + 4 + 4));
     searchResponse->packet << (uint32)0;
 
@@ -172,6 +174,7 @@ void AuctionHouseWorkerThread::SearchListRequest(AuctionSearchListRequest const&
         for (; itr != auctionEntries.end(); ++itr)
         {
             (*itr)->BuildAuctionInfo(searchResponse->packet);
+            searchResponse->itemBonusSeeds.push_back((*itr)->item.bonusSeed);
 
             if (++count >= MAX_AUCTIONS_PER_PAGE)
                 break;
@@ -187,6 +190,7 @@ void AuctionHouseWorkerThread::SearchListRequest(AuctionSearchListRequest const&
             std::shared_ptr<SearchableAuctionEntry> const& Aentry = pair.second;
             ++count;
             Aentry->BuildAuctionInfo(searchResponse->packet);
+            searchResponse->itemBonusSeeds.push_back(Aentry->item.bonusSeed);
 
             if (count >= MAX_GETALL_RETURN)
                 break;
@@ -208,6 +212,7 @@ void AuctionHouseWorkerThread::SearchOwnerListRequest(AuctionSearchOwnerListRequ
 
     AuctionSearcherResponse* searchResponse = new AuctionSearcherResponse();
     searchResponse->playerGuid = searchOwnerListRequest.ownerGuid;
+    searchResponse->listType = 1;
     searchResponse->packet.Initialize(SMSG_AUCTION_OWNER_LIST_RESULT, (4 + 4 + 4));
     searchResponse->packet << (uint32)0;                                     // amount place holder
 
@@ -221,6 +226,7 @@ void AuctionHouseWorkerThread::SearchOwnerListRequest(AuctionSearchOwnerListRequ
 
         std::shared_ptr<SearchableAuctionEntry> const& auctionEntry = pair.second;
         auctionEntry->BuildAuctionInfo(searchResponse->packet);
+        searchResponse->itemBonusSeeds.push_back(auctionEntry->item.bonusSeed);
         ++count;
         ++totalcount;
     }
@@ -238,6 +244,7 @@ void AuctionHouseWorkerThread::SearchBidderListRequest(AuctionSearchBidderListRe
 
     AuctionSearcherResponse* searchResponse = new AuctionSearcherResponse();
     searchResponse->playerGuid = searchBidderListRequest.ownerGuid;
+    searchResponse->listType = 2;
     searchResponse->packet.Initialize(SMSG_AUCTION_BIDDER_LIST_RESULT, (4 + 4 + 4));
     searchResponse->packet << (uint32)0;                                     //add 0 as count
 
@@ -252,6 +259,7 @@ void AuctionHouseWorkerThread::SearchBidderListRequest(AuctionSearchBidderListRe
 
         std::shared_ptr<SearchableAuctionEntry> const& auctionEntry = itr->second;
         auctionEntry->BuildAuctionInfo(searchResponse->packet);
+        searchResponse->itemBonusSeeds.push_back(auctionEntry->item.bonusSeed);
         ++count;
         ++totalcount;
     }
@@ -263,6 +271,7 @@ void AuctionHouseWorkerThread::SearchBidderListRequest(AuctionSearchBidderListRe
 
         std::shared_ptr<SearchableAuctionEntry> const& auctionEntry = pair.second;
         auctionEntry->BuildAuctionInfo(searchResponse->packet);
+        searchResponse->itemBonusSeeds.push_back(auctionEntry->item.bonusSeed);
         ++count;
         ++totalcount;
     }
@@ -354,7 +363,11 @@ void AuctionHouseSearcher::Update()
     {
         Player* player = ObjectAccessor::FindConnectedPlayer(response->playerGuid);
         if (player)
+        {
             player->SendDirectMessage(&response->packet);
+            sScriptMgr->OnPlayerAfterSendAuctionList(player, response->listType,
+                response->itemBonusSeeds);
+        }
 
         delete response;
     }
@@ -396,7 +409,8 @@ void AuctionHouseSearcher::AddAuction(AuctionEntry const* auctionEntry)
     }
 
     searchableAuctionEntry->item.randomPropertyId = item->GetItemRandomPropertyId();
-    searchableAuctionEntry->item.suffixFactor = item->GetItemSuffixFactor();
+    searchableAuctionEntry->item.suffixFactor = item->GetItemPropertySeed();
+    searchableAuctionEntry->item.bonusSeed = item->GetBonusSeed();
     searchableAuctionEntry->item.count = item->GetCount();
     searchableAuctionEntry->item.spellCharges = item->GetSpellCharges();
     searchableAuctionEntry->item.itemTemplate = item->GetTemplate();

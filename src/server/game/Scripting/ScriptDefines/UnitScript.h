@@ -23,13 +23,16 @@
 
 enum UnitHook
 {
-    UNITHOOK_ON_HEAL,
+    UNITHOOK_ON_HEAL_FINAL,
     UNITHOOK_ON_DAMAGE,
+    UNITHOOK_MODIFY_DAMAGE_FINAL,
+    UNITHOOK_ON_DAMAGE_FINAL,
     UNITHOOK_MODIFY_PERIODIC_DAMAGE_AURAS_TICK,
     UNITHOOK_MODIFY_MELEE_DAMAGE,
     UNITHOOK_MODIFY_SPELL_DAMAGE_TAKEN,
     UNITHOOK_MODIFY_HEAL_RECEIVED,
     UNITHOOK_ON_BEFORE_ROLL_MELEE_OUTCOME_AGAINST,
+    UNITHOOK_MODIFY_AURA_EFFECT_MASK,
     UNITHOOK_ON_AURA_APPLY,
     UNITHOOK_ON_AURA_REMOVE,
     UNITHOOK_IF_NORMAL_REACTION,
@@ -51,17 +54,26 @@ enum ReputationRank : uint8;
 class ByteBuffer;
 struct BuildValuesCachePosPointers;
 
+class Spell;
+class HealInfo;
+
 class UnitScript : public ScriptObject
 {
 protected:
     UnitScript(char const* name, bool addToScripts = true, std::vector<uint16> enabledHooks = std::vector<uint16>());
 
 public:
-    // Called when a unit deals healing to another unit
-    virtual void OnHeal(Unit* /*healer*/, Unit* /*reciever*/, uint32& /*gain*/) { }
+    // Called after healing is resolved and health is changed
+    virtual void OnHealFinal(HealInfo const& /*healInfo*/) { }
 
     // Called when a unit deals damage to another unit
     virtual void OnDamage(Unit* /*attacker*/, Unit* /*victim*/, uint32& /*damage*/) { }
+    // Called after hit resolution and normal mitigation, before health is changed
+    virtual void ModifyDamageFinal(Unit* /*attacker*/, Unit* /*victim*/, uint32& /*damage*/, DamageEffectType /*damageType*/, SpellInfo const* /*spellInfo*/, Spell const* /*damageSpell*/) { }
+
+    // Called after final damage modifiers, before health is changed
+    virtual void OnDamageFinal(Unit* /*attacker*/, Unit* /*victim*/, uint32 /*damage*/, DamageEffectType /*damageType*/, SpellInfo const* /*spellInfo*/, Spell const* /*damageSpell*/) { }
+
 
     // Called when DoT's Tick Damage is being Dealt
     // Attacker can be nullptr if he is despawned while the aura still exists on target
@@ -80,6 +92,10 @@ public:
     virtual uint32 DealDamage(Unit* /*AttackerUnit*/, Unit* /*pVictim*/, uint32 damage, DamageEffectType /*damagetype*/) { return damage; }
 
     virtual void OnBeforeRollMeleeOutcomeAgainst(Unit const* /*attacker*/, Unit const* /*victim*/, WeaponAttackType /*attType*/, int32& /*attackerMaxSkillValueForLevel*/, int32& /*victimMaxSkillValueForLevel*/, int32& /*attackerWeaponSkill*/, int32& /*victimDefenseSkill*/, int32& /*crit_chance*/, int32& /*miss_chance*/, int32& /*dodge_chance*/, int32& /*parry_chance*/, int32& /*block_chance*/ ) {   };
+
+    // Called before an aura is initially applied to a unit. Scripts may remove
+    // effects from effectMask; the core ignores attempts to add effects.
+    virtual void ModifyAuraEffectMask(Unit* /*unit*/, Aura* /*aura*/, uint8& /*effectMask*/) { }
 
     virtual void OnAuraApply(Unit* /*unit*/, Aura* /*aura*/) { }
 

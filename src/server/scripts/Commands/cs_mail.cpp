@@ -260,8 +260,8 @@ public:
 
         QueryResult itemResult = CharacterDatabase.Query(
             "SELECT creatorGuid, giftCreatorGuid, count, duration, charges, flags, enchantments,"
-            " randomPropertyId, durability, playedTime, text, mi.item_guid, itemEntry, ii.owner_guid"
-            " FROM mail_items mi LEFT JOIN item_instance ii ON mi.item_guid = ii.guid"
+            " randomPropertyId, durability, playedTime, text, bonusSeed, mi.item_guid, itemEntry,"
+            " ii.owner_guid FROM mail_items mi LEFT JOIN item_instance ii ON mi.item_guid = ii.guid"
             " WHERE mi.mail_id = {}", mailId);
 
         if (itemResult)
@@ -269,8 +269,8 @@ public:
             do
             {
                 Field* itemFields = itemResult->Fetch();
-                uint32 itemGuid  = itemFields[11].Get<uint32>();
-                uint32 itemEntry = itemFields[12].Get<uint32>();
+                uint32 itemGuid  = itemFields[12].Get<uint32>();
+                uint32 itemEntry = itemFields[13].Get<uint32>();
 
                 // Prefer the item object the session already has loaded over creating a duplicate
                 if (Item* item = player ? player->GetMItem(itemGuid) : nullptr)
@@ -305,8 +305,8 @@ public:
                 }
 
                 Item* item = NewItemOrBag(proto);
-                ObjectGuid ownerGuid = itemFields[13].Get<uint32>()
-                    ? ObjectGuid::Create<HighGuid::Player>(itemFields[13].Get<uint32>())
+                ObjectGuid ownerGuid = itemFields[14].Get<uint32>()
+                    ? ObjectGuid::Create<HighGuid::Player>(itemFields[14].Get<uint32>())
                     : ObjectGuid::Empty;
 
                 if (!item->LoadFromDB(itemGuid, ownerGuid, itemFields, itemEntry))

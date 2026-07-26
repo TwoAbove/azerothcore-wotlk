@@ -51,6 +51,7 @@ enum PlayerHook
     PLAYERHOOK_ON_MONEY_CHANGED,
     PLAYERHOOK_ON_BEFORE_LOOT_MONEY,
     PLAYERHOOK_ON_BEFORE_SEND_LOOT,
+    PLAYERHOOK_ON_AFTER_SEND_AUCTION_LIST,
     PLAYERHOOK_ON_GIVE_EXP,
     PLAYERHOOK_ON_REPUTATION_CHANGE,
     PLAYERHOOK_ON_REPUTATION_RANK_CHANGE,
@@ -114,6 +115,10 @@ enum PlayerHook
     PLAYERHOOK_ON_BEFORE_QUEST_COMPLETE,
     PLAYERHOOK_ON_QUEST_COMPUTE_EXP,
     PLAYERHOOK_ON_BEFORE_DURABILITY_REPAIR,
+    PLAYERHOOK_ON_ENVIRONMENTAL_DAMAGE,
+    PLAYERHOOK_CAN_ITEM_LOSE_DURABILITY,
+    PLAYERHOOK_CAN_ATTACK_WHILE_MOUNTED,
+    PLAYERHOOK_CAN_USE_GAMEOBJECT_WHILE_MOUNTED,
     PLAYERHOOK_ON_BEFORE_BUY_ITEM_FROM_VENDOR,
     PLAYERHOOK_ON_BEFORE_STORE_OR_EQUIP_NEW_ITEM,
     PLAYERHOOK_ON_AFTER_STORE_OR_EQUIP_NEW_ITEM,
@@ -291,6 +296,8 @@ public:
 
     // Called before loot is sent to a player
     virtual void OnPlayerBeforeSendLoot(Player* /*player*/, ObjectGuid /*lootGuid*/, Loot* /*loot*/) { }
+    virtual void OnPlayerAfterSendAuctionList(Player* /*player*/, uint8 /*listType*/,
+        std::vector<uint32> const& /*itemBonusSeeds*/) { }
 
     // Called when a player gains XP (before anything is given)
     virtual void OnPlayerGiveXP(Player* /*player*/, uint32& /*amount*/, Unit* /*victim*/, uint8 /*xpSource*/) { }
@@ -461,6 +468,14 @@ public:
 
     // Before durability repair action, you can even modify the discount value
     virtual void OnPlayerBeforeDurabilityRepair(Player* /*player*/, ObjectGuid /*npcGUID*/, ObjectGuid /*itemGUID*/, float&/*discountMod*/, uint8 /*guildBank*/) { }
+
+    // After native environmental mitigation, before damage is dealt and logged
+    virtual void OnPlayerEnvironmentalDamage(Player* /*player*/, uint8 /*type*/, uint32& /*damage*/) { }
+
+    // Positive durability loss only; repairs are never passed to this hook
+    [[nodiscard]] virtual bool CanItemLoseDurability(Player* /*player*/, Item* /*item*/) { return true; }
+    [[nodiscard]] virtual bool CanAttackWhileMounted(Player* /*player*/, Unit* /*victim*/, bool /*meleeAttack*/) { return false; }
+    [[nodiscard]] virtual bool CanUseGameObjectWhileMounted(Player* /*player*/, GameObject* /*gameObject*/) { return false; }
 
     //Before buying something from any vendor
     virtual void OnPlayerBeforeBuyItemFromVendor(Player* /*player*/, ObjectGuid /*vendorguid*/, uint32 /*vendorslot*/, uint32& /*item*/, uint8 /*count*/, uint8 /*bag*/, uint8 /*slot*/) { };

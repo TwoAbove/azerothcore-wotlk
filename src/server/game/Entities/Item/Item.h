@@ -213,13 +213,24 @@ enum ItemUpdateState
 };
 
 #define MAX_ITEM_SPELLS 5
+constexpr uint32 ITEM_BONUS_SEED_UNSET = 0;
+constexpr uint32 ITEM_BONUS_SEED_VERSION = 1;
+constexpr uint32 ITEM_BONUS_SEED_VERSION_SHIFT = 24;
+constexpr uint32 ITEM_BONUS_ID_MASK = 0xFFFF;
+
+constexpr uint32 MakeItemBonusSeed(uint16 bonusId)
+{
+    return (ITEM_BONUS_SEED_VERSION << ITEM_BONUS_SEED_VERSION_SHIFT) | bonusId;
+}
 
 bool ItemCanGoIntoBag(ItemTemplate const* proto, ItemTemplate const* pBagProto);
+
 
 class Item : public Object
 {
 public:
-    static Item* CreateItem(uint32 item, uint32 count, Player const* player = nullptr, bool clone = false, uint32 randomPropertyId = 0, bool temp = false);
+    static Item* CreateItem(uint32 item, uint32 count, Player const* player = nullptr, bool clone = false, uint32 randomPropertyId = 0, bool temp = false, uint32 bonusSeed = ITEM_BONUS_SEED_UNSET);
+    static uint32 GenerateItemBonusSeed(uint32 item, uint32 entropy);
     Item* CloneItem(uint32 count, Player const* player = nullptr) const;
 
     Item();
@@ -293,7 +304,10 @@ public:
 
     // RandomPropertyId (signed but stored as unsigned)
     [[nodiscard]] int32 GetItemRandomPropertyId() const { return GetInt32Value(ITEM_FIELD_RANDOM_PROPERTIES_ID); }
-    [[nodiscard]] uint32 GetItemSuffixFactor() const { return GetUInt32Value(ITEM_FIELD_PROPERTY_SEED); }
+    [[nodiscard]] uint32 GetItemPropertySeed() const { return GetUInt32Value(ITEM_FIELD_PROPERTY_SEED); }
+    [[nodiscard]] uint32 GetItemSuffixFactor() const { return GetItemPropertySeed(); }
+    [[nodiscard]] uint32 GetBonusSeed() const { return m_bonusSeed; }
+    void SetBonusSeed(uint32 seed) { m_bonusSeed = seed; }
     void SetItemRandomProperties(int32 randomPropId);
     void UpdateItemSuffixFactor();
     static int32 GenerateItemRandomPropertyId(uint32 item_id);
@@ -354,7 +368,7 @@ public:
 
     // Soulbound trade system
     void SetSoulboundTradeable(AllowedLooterSet& allowedLooters);
-    void ClearSoulboundTradeable(Player* currentOwner);
+    void ClearSoulboundTradeable(Player* currentOwner, CharacterDatabaseTransaction* trans = nullptr);
     bool CheckSoulboundTradeExpire();
 
     void BuildUpdate(UpdateDataMapType& data_map) override;
@@ -366,6 +380,7 @@ public:
     std::string GetDebugInfo() const override;
 private:
     std::string m_text;
+    uint32 m_bonusSeed;
     uint8 m_slot;
     Bag* m_container;
     ItemUpdateState uState;
