@@ -1,0 +1,102 @@
+#
+# mod-easy-gathering — phantom gnomish multitool
+#
+
+[worldserver]
+
+########################################
+# EasyGathering.Fishing.Enable
+#     Description: Fishing no longer requires an equipped fishing pole.
+#                  While channeling Fishing, a pole is shown in the visible
+#                  mainhand (weapons stay equipped) and the best fishing pole
+#                  in the player's bags contributes its +fishing bonuses and
+#                  lure/line enchants as temporary auras. Without any pole the
+#                  player fishes at base skill.
+#                  Requirement strip is applied at startup; changing this
+#                  requires a worldserver restart.
+#     Default:     1 - (Enabled)
+#                  0 - (Disabled)
+
+EasyGathering.Fishing.Enable = 1
+
+########################################
+# EasyGathering.Fishing.DefaultPoleVisual
+#     Description: Item entry shown in the visible mainhand while fishing when
+#                  no pole is found in the player's bags.
+#                  0 disables the visual in that case.
+#     Default:     6256 - (Fishing Pole)
+
+EasyGathering.Fishing.DefaultPoleVisual = 6256
+
+########################################
+# EasyGathering.Tools.Enable
+#     Description: Remove physical tool requirements (totem categories) from
+#                  all spells: profession casts work without carrying the tool.
+#                  Applied at startup; changing this requires a worldserver
+#                  restart.
+#     Default:     1 - (Enabled)
+#                  0 - (Disabled)
+
+EasyGathering.Tools.Enable = 1
+
+########################################
+# EasyGathering.Tools.TotemCategories
+#     Description: Comma-separated TotemCategory.dbc ids stripped from spells.
+#                  Defaults to every physical tool referenced by 3.3.5 spells:
+#                    14  - Arclight Spanner        (engineering)
+#                    15  - Gyromatic Micro-Adjustor (engineering)
+#                    121 - Virtuoso Inking Set     (inscription)
+#                    162 - Blacksmith Hammer       (blacksmithing)
+#                    165 - Mining Pick             (mining)
+#                    166 - Skinning Knife          (skinning)
+#                  Crafted profession foci (enchanting rods 6-10/41/62/63/190,
+#                  Philosopher's Stone 12) are deliberately not included.
+#     Default:     "14,15,121,162,165,166"
+
+EasyGathering.Tools.TotemCategories = "14,15,121,162,165,166"
+
+########################################
+# EasyGathering.Materials.StackSize
+#     Description: Set the stack size for gems, reagents, trade goods, and
+#                  items consumed by profession recipes. Applied at startup;
+#                  changing this requires a worldserver restart.
+#     Default:     200
+#                  0 - (Disabled)
+
+EasyGathering.Materials.StackSize = 200
+
+########################################
+# EasyGathering.MultiTap.Enable
+#     Description: Let each character gather a mining vein or herb node once.
+#                  The shared window begins when the first player fully loots
+#                  the node. Requires a worldserver restart.
+#     Default:     1 - (Enabled)
+#                  0 - (Disabled)
+
+EasyGathering.MultiTap.Enable = 1
+
+########################################
+# EasyGathering.MultiTap.WindowSeconds
+#     Description: Seconds the node remains available after the first
+#                  completed gather. Requires a worldserver restart.
+#     Default:     10
+
+EasyGathering.MultiTap.WindowSeconds = 10
+
+########################################
+# EasyGathering.Earthcaller.Enable
+#     Description: Mining and herbalism nodes can wake a hostile Earthcaller
+#                  Guardian. Its corpse contains one enriched same-tier side
+#                  drop, with no money, XP, or reputation.
+#     Default:     1 - (Enabled)
+#                  0 - (Disabled)
+
+EasyGathering.Earthcaller.Enable = 1
+
+########################################
+# EasyGathering.Earthcaller.Chance
+#     Description: Percent chance for each completed mining or herbalism
+#                  gather to wake an elemental.
+#     Default:     10
+
+EasyGathering.Earthcaller.Chance = 10
