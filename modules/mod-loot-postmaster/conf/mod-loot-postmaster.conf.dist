@@ -1,0 +1,15 @@
+#
+# mod-loot-postmaster
+#
+
+[worldserver]
+
+########################################
+# LootPostmaster.Enable
+#     Description: Mail money and items left on creature corpses when those
+#                  corpses disappear. Group loot ownership and per-player
+#                  free-for-all eligibility are preserved.
+#     Default:     1 - (Enabled)
+#                  0 - (Disabled)
+
+LootPostmaster.Enable = 1
