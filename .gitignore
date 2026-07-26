@@ -11,6 +11,13 @@
 !/modules/CMakeLists.txt
 !/modules/*.h
 !/modules/*.cmake
+!/modules/mod-account-taxi
+!/modules/mod-bot-minds
+!/modules/mod-easy-gathering
+!/modules/mod-open-tap
+!/modules/mod-talent-loadouts
+!/modules/mod-tertiary-stats
+!/modules/mod-test-harness
 /build*/
 /var/*
 !/var/build/.gitkeep
