@@ -1,0 +1,39 @@
+#
+
+[worldserver]
+
+########################################
+# Talent Loadouts module configuration
+########################################
+#
+#    TalentLoadouts.Enable
+#        Description: Master switch for the Talent Loadouts module
+#                     (the .spec chat commands and the gossip NPC).
+#        Default:     1 - Enabled
+#                     0 - Disabled
+#
+
+TalentLoadouts.Enable = 1
+
+#
+#    TalentLoadouts.Max
+#        Description: Maximum number of named loadouts a single character may
+#                     store. Overwriting an existing loadout never counts
+#                     against this cap.
+#        Default:     0 - Unlimited
+#
+
+TalentLoadouts.Max = 0
+
+#
+#    TalentLoadouts.CommandSecurity
+#        Description: Minimum account security level required to use the .spec
+#                     chat commands. The gossip NPC remains available to all
+#                     players while the module is enabled.
+#        Default:     0 - All players
+#                     1 - Moderator
+#                     2 - Gamemaster
+#                     3 - Administrator
+#
+
+TalentLoadouts.CommandSecurity = 0
