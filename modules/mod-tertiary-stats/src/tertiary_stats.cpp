@@ -47,18 +47,22 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <limits>
 #include <list>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace
 {
 std::string const STATE_KEY = "mod-tertiary-stats";
 std::string const REFORGE_STATE_KEY = "mod-tertiary-stats-reforge";
+constexpr std::string_view TERTIARY_PROTOCOL_VERSION = "V1";
+std::atomic<uint32> _tertiaryProtocolGeneration{ 0 };
 constexpr uint8 MAX_POWERS_PER_ITEM = 3;
 constexpr uint8 BONUS_MASK_BITS = 7;
 constexpr uint16 MAX_BONUS_POINTS = (1u << (16 - BONUS_MASK_BITS)) - 1;
@@ -312,6 +316,30 @@ bool DecodeBonusId(uint16 bonusId, BonusDefinition& definition)
 
     definition = { mask, points, 0 };
     return true;
+}
+
+std::string TertiaryDefinitionWirePayload(uint16 bonusId)
+{
+    BonusDefinition definition;
+    if (!DecodeBonusId(bonusId, definition))
+        return {};
+
+    if (definition.fabledEffect)
+        return Acore::StringFormat("F:{}", uint32(definition.fabledEffect));
+
+    std::string payload = Acore::StringFormat("O:{}", definition.pointsPerPower);
+    for (uint8 powerIndex = 0; powerIndex < POWER_COUNT; ++powerIndex)
+        if (definition.powerMask & (1u << powerIndex))
+            payload += Acore::StringFormat(":{}", uint32(powerIndex));
+    return payload;
+}
+
+uint32 NextTertiaryProtocolGeneration()
+{
+    uint32 generation = _tertiaryProtocolGeneration.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (!generation)
+        generation = _tertiaryProtocolGeneration.fetch_add(1, std::memory_order_relaxed) + 1;
+    return generation;
 }
 
 class BonusRng
@@ -824,7 +852,7 @@ TertiaryState* EnsureState(Player* player)
 
 void SendTertiarySnapshotMessage(Player* player, std::string const& payload)
 {
-    std::string message = "TStats\t" + payload;
+    std::string message = Acore::StringFormat("TStats\t{}:{}", TERTIARY_PROTOCOL_VERSION, payload);
     WorldPacket packet;
     ChatHandler::BuildChatPacket(packet, CHAT_MSG_WHISPER, LANG_ADDON, player, player, message);
     player->SendDirectMessage(&packet);
@@ -974,24 +1002,25 @@ bool ReforgeFabled(Player* player, ObjectGuid sourceGuid, ObjectGuid destination
 
 void SendTertiaryInventorySnapshot(Player* player)
 {
-    SendTertiarySnapshotMessage(player, "I:C");
+    uint32 generation = NextTertiaryProtocolGeneration();
+    SendTertiarySnapshotMessage(player, Acore::StringFormat("I:C:{}", generation));
 
     for (uint8 slot = EQUIPMENT_SLOT_START; slot < EQUIPMENT_SLOT_END; ++slot)
     {
         Item const* item = player->GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
-        uint16 bonusId = ResolvedTertiaryBonusOf(item, player);
-        if (bonusId)
-            SendTertiarySnapshotMessage(player, Acore::StringFormat("I:E:{}:{}",
-                uint32(slot - EQUIPMENT_SLOT_START + 1), bonusId));
+        std::string definition = TertiaryDefinitionWirePayload(ResolvedTertiaryBonusOf(item, player));
+        if (!definition.empty())
+            SendTertiarySnapshotMessage(player, Acore::StringFormat("I:E:{}:{}:{}",
+                generation, uint32(slot - EQUIPMENT_SLOT_START + 1), definition));
     }
 
     for (uint8 slot = INVENTORY_SLOT_ITEM_START; slot < INVENTORY_SLOT_ITEM_END; ++slot)
     {
         Item const* item = player->GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
-        uint16 bonusId = ResolvedTertiaryBonusOf(item, player);
-        if (bonusId)
-            SendTertiarySnapshotMessage(player, Acore::StringFormat("I:B:0:{}:{}",
-                uint32(slot - INVENTORY_SLOT_ITEM_START + 1), bonusId));
+        std::string definition = TertiaryDefinitionWirePayload(ResolvedTertiaryBonusOf(item, player));
+        if (!definition.empty())
+            SendTertiarySnapshotMessage(player, Acore::StringFormat("I:B:{}:0:{}:{}",
+                generation, uint32(slot - INVENTORY_SLOT_ITEM_START + 1), definition));
     }
 
     for (uint8 bagSlot = INVENTORY_SLOT_BAG_START; bagSlot < INVENTORY_SLOT_BAG_END; ++bagSlot)
@@ -1004,46 +1033,53 @@ void SendTertiaryInventorySnapshot(Player* player)
         for (uint32 slot = 0; slot < bag->GetBagSize(); ++slot)
         {
             Item const* item = bag->GetItemByPos(slot);
-            uint16 bonusId = ResolvedTertiaryBonusOf(item, player);
-            if (bonusId)
-                SendTertiarySnapshotMessage(player, Acore::StringFormat("I:B:{}:{}:{}",
-                    clientBag, slot + 1, bonusId));
+            std::string definition = TertiaryDefinitionWirePayload(ResolvedTertiaryBonusOf(item, player));
+            if (!definition.empty())
+                SendTertiarySnapshotMessage(player, Acore::StringFormat("I:B:{}:{}:{}:{}",
+                    generation, clientBag, slot + 1, definition));
         }
     }
 
-    SendTertiarySnapshotMessage(player, "I:D");
+    SendTertiarySnapshotMessage(player, Acore::StringFormat("I:D:{}", generation));
 }
 
 void SendTertiaryLootSnapshot(Player* player, Loot* loot)
 {
-    SendTertiarySnapshotMessage(player, "L:C");
-    if (!loot)
-        return;
-
-    for (uint32 slot = 0; slot < loot->GetMaxSlotInLootFor(player); ++slot)
+    uint32 generation = NextTertiaryProtocolGeneration();
+    SendTertiarySnapshotMessage(player, Acore::StringFormat("L:C:{}", generation));
+    if (loot)
     {
-        LootItem const* lootItem = loot->LootItemInSlot(slot, player);
-        ItemTemplate const* itemTemplate =
-            lootItem ? sObjectMgr->GetItemTemplate(lootItem->itemid) : nullptr;
-        uint16 bonusId = lootItem
-            ? ResolvedTertiaryBonusFromSeed(lootItem->bonusSeed, player, itemTemplate) : 0;
-        if (bonusId)
-            SendTertiarySnapshotMessage(player,
-                Acore::StringFormat("L:{}:{}", slot + 1, bonusId));
+        for (uint32 slot = 0; slot < loot->GetMaxSlotInLootFor(player); ++slot)
+        {
+            LootItem const* lootItem = loot->LootItemInSlot(slot, player);
+            ItemTemplate const* itemTemplate =
+                lootItem ? sObjectMgr->GetItemTemplate(lootItem->itemid) : nullptr;
+            std::string definition = lootItem ? TertiaryDefinitionWirePayload(
+                ResolvedTertiaryBonusFromSeed(lootItem->bonusSeed, player, itemTemplate)) : "";
+            if (!definition.empty())
+                SendTertiarySnapshotMessage(player,
+                    Acore::StringFormat("L:R:{}:{}:{}", generation, slot + 1, definition));
+        }
     }
+    SendTertiarySnapshotMessage(player, Acore::StringFormat("L:D:{}", generation));
 }
 
 void SendTertiaryAuctionSnapshot(Player* player, uint8 listType,
     std::vector<uint32> const& itemBonusSeeds)
 {
-    SendTertiarySnapshotMessage(player, Acore::StringFormat("A:C:{}", uint32(listType)));
+    uint32 generation = NextTertiaryProtocolGeneration();
+    SendTertiarySnapshotMessage(player,
+        Acore::StringFormat("A:C:{}:{}", generation, uint32(listType)));
     for (uint32 index = 0; index < itemBonusSeeds.size(); ++index)
     {
-        uint16 bonusId = ResolvedTertiaryBonusFromSeed(itemBonusSeeds[index], player);
-        if (bonusId)
-            SendTertiarySnapshotMessage(player, Acore::StringFormat("A:{}:{}:{}",
-                uint32(listType), index + 1, bonusId));
+        std::string definition = TertiaryDefinitionWirePayload(
+            ResolvedTertiaryBonusFromSeed(itemBonusSeeds[index], player));
+        if (!definition.empty())
+            SendTertiarySnapshotMessage(player, Acore::StringFormat("A:R:{}:{}:{}:{}",
+                generation, uint32(listType), index + 1, definition));
     }
+    SendTertiarySnapshotMessage(player,
+        Acore::StringFormat("A:D:{}:{}", generation, uint32(listType)));
 }
 
 void SendFabledSettingsSnapshot(Player* player)
@@ -2032,8 +2068,10 @@ public:
             return true;
 
         std::string_view payload(message.data() + PREFIX.size(), message.size() - PREFIX.size());
-        if (payload == "S")
+        if (payload == "V1:S")
             SendTertiarySnapshot(player);
+        else if (payload == "V1:I")
+            SendTertiaryInventorySnapshot(player);
 
         return false;
     }
@@ -2867,6 +2905,11 @@ public:
                 && rolledDefinition.pointsPerPower == _pointBudget,
             "generated item deterministically decodes its three-power bonus",
             "bonusId=" + std::to_string(rolledBonusId));
+        context.Expect(TertiaryDefinitionWirePayload(rolledBonusId)
+                == Acore::StringFormat("O:{}:0:1:2", _pointBudget)
+                && TertiaryDefinitionWirePayload(Fabled::BonusId(Fabled::Effect::Warcaster))
+                    == "F:13",
+            "item definitions serialize as semantic ordinary and Fabled protocol records");
         uint32 bonusSeed = _item->GetBonusSeed();
         context.Expect((bonusSeed >> ITEM_BONUS_SEED_VERSION_SHIFT) == ITEM_BONUS_SEED_VERSION
                 && TertiaryBonusOf(_item) == rolledBonusId,

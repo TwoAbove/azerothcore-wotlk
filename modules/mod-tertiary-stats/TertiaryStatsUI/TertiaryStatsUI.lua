@@ -1,4 +1,5 @@
 local ADDON_PREFIX = "TStats"
+local PROTOCOL_VERSION = "V1"
 local floor = math.floor
 local QTip = LibStub("LibQTip-1.0")
 
@@ -52,11 +53,15 @@ local FABLED_NAMES = {
 local snapshot = {}
 local characterPanel
 local rows = {}
-local lastSnapshotRequest = 0
-local bagBonuses = {}
-local equippedBonuses = {}
-local lootBonuses = {}
-local auctionBonuses = { [0] = {}, [1] = {}, [2] = {} }
+local lastProtocolRequest = 0
+local pendingProtocolRequest
+local bagDefinitions = {}
+local equippedDefinitions = {}
+local lootDefinitions = {}
+local auctionDefinitions = { [0] = {}, [1] = {}, [2] = {} }
+local inventoryGeneration = 0
+local lootGeneration = 0
+local auctionGenerations = { [0] = 0, [1] = 0, [2] = 0 }
 local fabledSettings = {
     [1] = { 20 },
     [2] = { 4000 },
@@ -69,51 +74,9 @@ local fabledSettings = {
     [11] = { 15000 },
     [12] = { 4 },
 }
-local nextSnapshotRequest
 local fabledRows = {}
 local UpdateFabledRows
 
-local function DecodeTertiaryBonusId(bonusId)
-    bonusId = tonumber(bonusId)
-    if not bonusId or bonusId == 0 or bonusId == 65535 then
-        return nil
-    end
-    bonusId = floor(bonusId)
-
-    local powerMask = bonusId % 128
-    local pointsPerPower = floor(bonusId / 128)
-    if powerMask == 0 then
-        if FABLED_NAMES[pointsPerPower] then
-            return { id = bonusId, fabled = pointsPerPower, points = 0, powers = {} }
-        end
-        return nil
-    end
-    if pointsPerPower < 1 or pointsPerPower > 511 then
-        return nil
-    end
-
-    local remaining = powerMask
-    local powerCount = 0
-    local powers = {}
-    for index = 1, #POWER_NAMES do
-        if remaining % 2 == 1 then
-            powerCount = powerCount + 1
-            powers[#powers + 1] = index
-        end
-        remaining = floor(remaining / 2)
-    end
-
-    if remaining ~= 0 or powerCount == 0 or powerCount > 3 then
-        return nil
-    end
-
-    return {
-        id = bonusId,
-        mask = powerMask,
-        points = pointsPerPower,
-        powers = powers,
-    }
-end
 
 
 local function TertiaryItemLine(powerIndex, points)
@@ -294,7 +257,7 @@ local function RenderTertiarySidecar(tooltip)
     if candidateSlots then
         for _, slot in ipairs(candidateSlots) do
             if HasDefinition(candidateDefinition) or
-                HasDefinition(DecodeTertiaryBonusId(equippedBonuses[slot])) then
+                HasDefinition(equippedDefinitions[slot]) then
                 hasComparison = true
                 break
             end
@@ -317,7 +280,7 @@ local function RenderTertiarySidecar(tooltip)
         AddSpanningLine(sidecar, "|cffb0b0b0Rolls when claimed." .. COLOR_END)
         if candidateSlots then
             for _, slot in ipairs(candidateSlots) do
-                local equippedDefinition = DecodeTertiaryBonusId(equippedBonuses[slot])
+                local equippedDefinition = equippedDefinitions[slot]
                 if HasDefinition(equippedDefinition) then
                     sidecar:AddSeparator(1, 0.35, 0.35, 0.35, 1)
                     AddSpanningLine(
@@ -339,7 +302,7 @@ local function RenderTertiarySidecar(tooltip)
 
     if candidateSlots then
         for _, slot in ipairs(candidateSlots) do
-            local equippedDefinition = DecodeTertiaryBonusId(equippedBonuses[slot])
+            local equippedDefinition = equippedDefinitions[slot]
             if HasDefinition(candidateDefinition) or HasDefinition(equippedDefinition) then
                 if sidecar:GetLineCount() > 0 then
                     sidecar:AddSeparator(1, 0.35, 0.35, 0.35, 1)
@@ -367,21 +330,21 @@ end
 local function AddCachedBagTooltip(tooltip, bag, slot)
     SetTooltipDefinition(
         tooltip, { "B", bag, slot },
-        DecodeTertiaryBonusId(bagBonuses[BagKey(bag, slot)]))
+        bagDefinitions[BagKey(bag, slot)])
 end
 
 local function AddCachedEquippedTooltip(tooltip, unit, slot)
     if unit == "player" then
         SetTooltipDefinition(
             tooltip, { "E", slot },
-            DecodeTertiaryBonusId(equippedBonuses[slot]))
+            equippedDefinitions[slot])
     end
 end
 
 local function AddCachedLootTooltip(tooltip, slot)
     SetTooltipDefinition(
         tooltip, { "L", slot },
-        DecodeTertiaryBonusId(lootBonuses[slot]))
+        lootDefinitions[slot])
 end
 
 local function AddCachedAuctionTooltip(tooltip, listName, index)
@@ -389,7 +352,7 @@ local function AddCachedAuctionTooltip(tooltip, listName, index)
     if listType ~= nil then
         SetTooltipDefinition(
             tooltip, { "A", listType, index },
-            DecodeTertiaryBonusId(auctionBonuses[listType][index]))
+            auctionDefinitions[listType][index])
     end
 end
 
@@ -688,7 +651,7 @@ local function RefreshLocalRawPoints()
 
     local activeFabled = {}
     for slot = 1, 19 do
-        local definition = DecodeTertiaryBonusId(equippedBonuses[slot])
+        local definition = equippedDefinitions[slot]
         if definition then
             if definition.fabled then
                 activeFabled[definition.fabled] = true
@@ -704,20 +667,34 @@ local function RefreshLocalRawPoints()
     end
 end
 
-local function RequestSnapshot()
-    RefreshLocalRawPoints()
-    local now = GetTime()
-    if now - lastSnapshotRequest < 0.2 then
-        nextSnapshotRequest = lastSnapshotRequest + 0.2
-        return
-    end
-    lastSnapshotRequest = now
-    nextSnapshotRequest = nil
-
+local function SendProtocolRequest(request)
+    lastProtocolRequest = GetTime()
+    pendingProtocolRequest = nil
     local playerName = UnitName("player")
     if playerName and SendAddonMessage then
-        SendAddonMessage(ADDON_PREFIX, "S", "WHISPER", playerName)
+        SendAddonMessage(
+            ADDON_PREFIX, PROTOCOL_VERSION .. ":" .. request, "WHISPER", playerName)
     end
+end
+
+local function QueueProtocolRequest(request)
+    local now = GetTime()
+    if now - lastProtocolRequest < 0.2 then
+        if request == "S" or not pendingProtocolRequest then
+            pendingProtocolRequest = request
+        end
+        return
+    end
+    SendProtocolRequest(request)
+end
+
+local function RequestSnapshot()
+    RefreshLocalRawPoints()
+    QueueProtocolRequest("S")
+end
+
+local function RequestInventorySnapshot()
+    QueueProtocolRequest("I")
 end
 
 local PANE_TOOLTIP_WIDTH = 320
@@ -918,13 +895,66 @@ local function SplitProtocol(message)
     return fields
 end
 
-local function HandleSnapshot(message)
+local function ProtocolInteger(value, minimum, maximum)
+    local number = tonumber(value)
+    if not number or number ~= floor(number) or number < minimum or number > maximum then
+        return nil
+    end
+    return number
+end
+
+local function ParseItemDefinition(fields, firstField)
+    local kind = fields[firstField]
+    if kind == "F" then
+        local effect = ProtocolInteger(fields[firstField + 1], 1, #FABLED_NAMES)
+        if effect and firstField + 1 == #fields then
+            return { fabled = effect, points = 0, powers = {} }
+        end
+        return nil
+    end
+    if kind ~= "O" then
+        return nil
+    end
+
+    local points = ProtocolInteger(fields[firstField + 1], 1, 1000000)
+    if not points then
+        return nil
+    end
+    local powers = {}
+    local seen = {}
+    for fieldIndex = firstField + 2, #fields do
+        local wireIndex = ProtocolInteger(fields[fieldIndex], 0, #POWER_NAMES - 1)
+        if not wireIndex or seen[wireIndex] or #powers == 3 then
+            return nil
+        end
+        seen[wireIndex] = true
+        powers[#powers + 1] = wireIndex + 1
+    end
+    if #powers == 0 then
+        return nil
+    end
+    return { points = points, powers = powers }
+end
+
+local inventoryFrameGeneration
+local inventoryFrameBagDefinitions
+local inventoryFrameEquippedDefinitions
+local lootFrameGeneration
+local lootFrameDefinitions
+local auctionFrameGenerations = { [0] = nil, [1] = nil, [2] = nil }
+local auctionFrameDefinitions = { [0] = nil, [1] = nil, [2] = nil }
+
+local function HandleProtocolMessage(message)
     local fields = SplitProtocol(message)
-    if fields[1] == "F" then
-        local wireIndex = tonumber(fields[2])
-        if wireIndex and wireIndex >= 0 and wireIndex < #FABLED_NAMES then
+    if fields[1] ~= PROTOCOL_VERSION then
+        return
+    end
+
+    if fields[2] == "F" then
+        local wireIndex = ProtocolInteger(fields[3], 0, #FABLED_NAMES - 1)
+        if wireIndex then
             local values = {}
-            for fieldIndex = 3, #fields do
+            for fieldIndex = 4, #fields do
                 values[#values + 1] = tonumber(fields[fieldIndex]) or 0
             end
             fabledSettings[wireIndex + 1] = values
@@ -932,72 +962,104 @@ local function HandleSnapshot(message)
         return
     end
 
-    if fields[1] == "I" then
-        if fields[2] == "C" then
-            bagBonuses = {}
-            equippedBonuses = {}
-        elseif fields[2] == "E" then
-            local slot = tonumber(fields[3])
-            local bonusId = tonumber(fields[4])
-            if slot and bonusId then
-                equippedBonuses[slot] = bonusId
+    if fields[2] == "I" then
+        local action = fields[3]
+        local generation = ProtocolInteger(fields[4], 1, 4294967295)
+        if action == "C" and generation and #fields == 4 then
+            if generation > inventoryGeneration then
+                inventoryGeneration = generation
+                inventoryFrameGeneration = generation
+                inventoryFrameBagDefinitions = {}
+                inventoryFrameEquippedDefinitions = {}
             end
-        elseif fields[2] == "B" then
-            local bag = tonumber(fields[3])
-            local slot = tonumber(fields[4])
-            local bonusId = tonumber(fields[5])
-            if bag and slot and bonusId then
-                bagBonuses[BagKey(bag, slot)] = bonusId
+        elseif action == "E" and generation == inventoryFrameGeneration then
+            local slot = ProtocolInteger(fields[5], 1, 19)
+            local definition = slot and ParseItemDefinition(fields, 6)
+            if definition then
+                inventoryFrameEquippedDefinitions[slot] = definition
             end
-        elseif fields[2] == "D" then
+        elseif action == "B" and generation == inventoryFrameGeneration then
+            local bag = ProtocolInteger(fields[5], 0, 4)
+            local slot = ProtocolInteger(fields[6], 1, 255)
+            local definition = bag and slot and ParseItemDefinition(fields, 7)
+            if definition then
+                inventoryFrameBagDefinitions[BagKey(bag, slot)] = definition
+            end
+        elseif action == "D" and generation == inventoryFrameGeneration and #fields == 4 then
+            bagDefinitions = inventoryFrameBagDefinitions
+            equippedDefinitions = inventoryFrameEquippedDefinitions
+            inventoryFrameGeneration = nil
+            inventoryFrameBagDefinitions = nil
+            inventoryFrameEquippedDefinitions = nil
             RefreshLocalRawPoints()
             RefreshVisibleCachedTooltip()
         end
         return
     end
 
-    if fields[1] == "L" then
-        if fields[2] == "C" then
-            lootBonuses = {}
-        else
-            local slot = tonumber(fields[2])
-            local bonusId = tonumber(fields[3])
-            if slot and bonusId then
-                lootBonuses[slot] = bonusId
+    if fields[2] == "L" then
+        local action = fields[3]
+        local generation = ProtocolInteger(fields[4], 1, 4294967295)
+        if action == "C" and generation and #fields == 4 then
+            if generation > lootGeneration then
+                lootGeneration = generation
+                lootFrameGeneration = generation
+                lootFrameDefinitions = {}
             end
+        elseif action == "R" and generation == lootFrameGeneration then
+            local slot = ProtocolInteger(fields[5], 1, 255)
+            local definition = slot and ParseItemDefinition(fields, 6)
+            if definition then
+                lootFrameDefinitions[slot] = definition
+            end
+        elseif action == "D" and generation == lootFrameGeneration and #fields == 4 then
+            lootDefinitions = lootFrameDefinitions
+            lootFrameGeneration = nil
+            lootFrameDefinitions = nil
+            RefreshVisibleCachedTooltip()
         end
         return
     end
 
-    if fields[1] == "A" then
-        if fields[2] == "C" then
-            local listType = tonumber(fields[3])
-            if listType ~= nil then
-                auctionBonuses[listType] = {}
+    if fields[2] == "A" then
+        local action = fields[3]
+        local generation = ProtocolInteger(fields[4], 1, 4294967295)
+        local listType = ProtocolInteger(fields[5], 0, 2)
+        if action == "C" and generation and listType and #fields == 5 then
+            if generation > auctionGenerations[listType] then
+                auctionGenerations[listType] = generation
+                auctionFrameGenerations[listType] = generation
+                auctionFrameDefinitions[listType] = {}
             end
-        else
-            local listType = tonumber(fields[2])
-            local index = tonumber(fields[3])
-            local bonusId = tonumber(fields[4])
-            if listType ~= nil and auctionBonuses[listType] and index and bonusId then
-                auctionBonuses[listType][index] = bonusId
+        elseif action == "R" and generation and listType
+                and generation == auctionFrameGenerations[listType] then
+            local index = ProtocolInteger(fields[6], 1, 1000000)
+            local definition = index and ParseItemDefinition(fields, 7)
+            if definition then
+                auctionFrameDefinitions[listType][index] = definition
             end
+        elseif action == "D" and generation and listType
+                and generation == auctionFrameGenerations[listType] and #fields == 5 then
+            auctionDefinitions[listType] = auctionFrameDefinitions[listType]
+            auctionFrameGenerations[listType] = nil
+            auctionFrameDefinitions[listType] = nil
+            RefreshVisibleCachedTooltip()
         end
         return
     end
 
-    if fields[1] ~= "S" then
+    if fields[2] ~= "S" then
         return
     end
 
-    local wireIndex = tonumber(fields[2])
-    if not wireIndex or wireIndex < 0 or wireIndex >= #POWER_NAMES then
+    local wireIndex = ProtocolInteger(fields[3], 0, #POWER_NAMES - 1)
+    if not wireIndex then
         return
     end
 
     local index = wireIndex + 1
-    local data = { raw = tonumber(fields[3]) or 0, values = {} }
-    for fieldIndex = 4, #fields do
+    local data = { raw = tonumber(fields[4]) or 0, values = {} }
+    for fieldIndex = 5, #fields do
         data.values[#data.values + 1] = tonumber(fields[fieldIndex]) or 0
     end
     snapshot[index] = data
@@ -1028,17 +1090,33 @@ controller:SetScript("OnEvent", function(_, event, ...)
         RequestSnapshot()
     elseif event == "PLAYER_ENTERING_WORLD" then
         RequestSnapshot()
-    elseif event == "PLAYER_EQUIPMENT_CHANGED" or event == "PLAYER_LEVEL_UP" or event == "BAG_UPDATE" then
+    elseif event == "PLAYER_EQUIPMENT_CHANGED" or event == "PLAYER_LEVEL_UP" then
+        inventoryFrameGeneration = nil
+        inventoryFrameBagDefinitions = nil
+        inventoryFrameEquippedDefinitions = nil
+        bagDefinitions = {}
+        equippedDefinitions = {}
+        RefreshLocalRawPoints()
+        RefreshVisibleCachedTooltip()
         RequestSnapshot()
+    elseif event == "BAG_UPDATE" then
+        inventoryFrameGeneration = nil
+        inventoryFrameBagDefinitions = nil
+        inventoryFrameEquippedDefinitions = nil
+        bagDefinitions = {}
+        RefreshVisibleCachedTooltip()
+        RequestInventorySnapshot()
     elseif event == "CHAT_MSG_ADDON" then
-        local prefix, message = ...
-        if prefix == ADDON_PREFIX then
-            HandleSnapshot(message)
+        local prefix, message, channel, sender = ...
+        local playerName = UnitName("player")
+        if prefix == ADDON_PREFIX and channel == "WHISPER"
+                and playerName and sender == playerName then
+            HandleProtocolMessage(message)
         end
     end
 end)
 controller:SetScript("OnUpdate", function()
-    if nextSnapshotRequest and GetTime() >= nextSnapshotRequest then
-        RequestSnapshot()
+    if pendingProtocolRequest and GetTime() >= lastProtocolRequest + 0.2 then
+        SendProtocolRequest(pendingProtocolRequest)
     end
 end)
