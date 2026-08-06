@@ -5504,8 +5504,11 @@ void Unit::RemoveAurasWithInterruptFlags(uint32 flag, uint32 except, bool isAuto
     // interrupt channeled spell
     if (Spell* spell = m_currentSpells[CURRENT_CHANNELED_SPELL])
     {
-        if (spell->getState() == SPELL_STATE_CASTING && (spell->m_spellInfo->ChannelInterruptFlags & flag) && spell->m_spellInfo->Id != except
-            && !((flag & (AURA_INTERRUPT_FLAG_MOVE | AURA_INTERRUPT_FLAG_TURNING)) && sScriptMgr->CanCastWhileMoving(spell)))
+        uint32 const matchedInterruptFlags = spell->m_spellInfo->ChannelInterruptFlags & flag;
+        uint32 const movementInterruptFlags = AURA_INTERRUPT_FLAG_MOVE | AURA_INTERRUPT_FLAG_TURNING;
+        bool const isMovementOnly = matchedInterruptFlags && !(matchedInterruptFlags & ~movementInterruptFlags);
+        if (spell->getState() == SPELL_STATE_CASTING && matchedInterruptFlags && spell->m_spellInfo->Id != except
+            && !(isMovementOnly && sScriptMgr->CanCastWhileMoving(spell)))
         {
             // Do not interrupt if auto shot
             if (!(isAutoshot && spell->m_spellInfo->HasAttribute(SPELL_ATTR2_DO_NOT_RESET_COMBAT_TIMERS)))

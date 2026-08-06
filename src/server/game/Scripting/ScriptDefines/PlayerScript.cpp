@@ -455,7 +455,7 @@ void ScriptMgr::OnPlayerBeforeLoadPetFromDB(Player* player, uint32& petentry, ui
     CALL_ENABLED_HOOKS(PlayerScript, PLAYERHOOK_ON_BEFORE_LOAD_PET_FROM_DB, script->OnPlayerBeforeLoadPetFromDB(player, petentry, petnumber, current, forceLoadFromDB));
 }
 
-void ScriptMgr::OnPlayerEnvironmentalDamage(Player* player, uint8 type, uint32& damage)
+void ScriptMgr::OnPlayerEnvironmentalDamage(Player* player, EnviromentalDamage type, uint32& damage)
 {
     CALL_ENABLED_HOOKS(PlayerScript, PLAYERHOOK_ON_ENVIRONMENTAL_DAMAGE, script->OnPlayerEnvironmentalDamage(player, type, damage));
 }

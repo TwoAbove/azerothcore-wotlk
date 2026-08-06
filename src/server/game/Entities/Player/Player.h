@@ -823,7 +823,7 @@ enum TeleportToOptions
 };
 
 /// Type of environmental damages
-enum EnviromentalDamage
+enum EnviromentalDamage : int
 {
     DAMAGE_EXHAUSTED = 0,
     DAMAGE_DROWNING  = 1,

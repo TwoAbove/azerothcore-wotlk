@@ -2162,7 +2162,7 @@ public:
     }
 
 
-    void OnPlayerEnvironmentalDamage(Player* player, uint8 type, uint32& damage) override
+    void OnPlayerEnvironmentalDamage(Player* player, EnviromentalDamage type, uint32& damage) override
     {
         if (!_settings.enabled || !_dbcReady || type == DAMAGE_FALL_TO_VOID || !damage)
             return;

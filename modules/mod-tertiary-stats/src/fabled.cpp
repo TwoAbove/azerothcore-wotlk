@@ -494,7 +494,7 @@ void HandleModifyAuraEffectMask(Player* player, Aura const* aura, uint8& effectM
         });
 }
 
-void HandleEnvironmentalDamage(Player* player, uint8 type, uint32& damage)
+void HandleEnvironmentalDamage(Player* player, EnviromentalDamage type, uint32& damage)
 {
     if (!_ready || !player)
         return;

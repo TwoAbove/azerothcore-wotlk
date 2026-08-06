@@ -608,7 +608,8 @@ public:
 
     [[nodiscard]] uint32 GetTriggeredByAuraTickNumber() const { return m_triggeredByAuraSpell.tickNumber; }
     [[nodiscard]] SpellInfo const* GetTriggeredByAuraSpellInfo() const { return m_triggeredByAuraSpell.spellInfo; }
-    [[nodiscard]] Aura* GetCreatedAura() const { return m_spellAura; }
+    [[nodiscard]] Aura* GetCreatedAura() { return m_spellAura; }
+    [[nodiscard]] Aura const* GetCreatedAura() const { return m_spellAura; }
 
     [[nodiscard]] TriggerCastFlags GetTriggeredCastFlags() const { return _triggeredCastFlags; }
 

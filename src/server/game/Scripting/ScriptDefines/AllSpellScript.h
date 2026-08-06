@@ -27,7 +27,6 @@ enum AllSpellHook
     ALLSPELLHOOK_ON_CALC_CRIT_CHANCE,
     ALLSPELLHOOK_ON_CALC_PERIODIC_CRIT_CHANCE,
     ALLSPELLHOOK_ON_SPELL_CHECK_CAST,
-    ALLSPELLHOOK_CAN_CAST_WITH_INSUFFICIENT_POWER,
     ALLSPELLHOOK_CAN_PREPARE,
     ALLSPELLHOOK_CAN_SCALING_EVERYTHING,
     ALLSPELLHOOK_CAN_SELECT_SPEC_TALENT,
@@ -68,9 +67,6 @@ public:
         Unit const* /*target*/, float& /*critChance*/) { }
 
     virtual void OnSpellCheckCast(Spell* /*spell*/, bool /*strict*/, SpellCastResult& /*res*/) { }
-
-    // Return true to let this spell consume its available power and handle the shortfall itself.
-    [[nodiscard]] virtual bool CanCastWithInsufficientPower(Spell const* /*spell*/) { return false; }
 
     [[nodiscard]] virtual bool CanPrepare(Spell* /*spell*/, SpellCastTargets const* /*targets*/, AuraEffect const* /*triggeredByAura*/) { return true; }
 
