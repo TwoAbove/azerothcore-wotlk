@@ -645,7 +645,8 @@ bool IsEligibleEquipment(ItemTemplate const* itemTemplate)
     }
 }
 
-Power PickWeightedPower(BonusRng& rng, uint8 selectedMask, bool wantExotic)
+Power PickWeightedPower(BonusRng& rng, uint8 selectedMask, bool wantExotic,
+    Settings const& settings)
 {
     float total = 0.0f;
     for (uint8 index = 0; index < POWER_COUNT; ++index)
@@ -653,7 +654,7 @@ Power PickWeightedPower(BonusRng& rng, uint8 selectedMask, bool wantExotic)
         Power power = Power(index);
         if ((selectedMask & (1u << index)) || IsExotic(power) != wantExotic)
             continue;
-        total += std::max(0.0f, _settings.weights[index]);
+        total += std::max(0.0f, settings.weights[index]);
     }
 
     if (total <= 0.0f)
@@ -665,7 +666,7 @@ Power PickWeightedPower(BonusRng& rng, uint8 selectedMask, bool wantExotic)
         Power power = Power(index);
         if ((selectedMask & (1u << index)) || IsExotic(power) != wantExotic)
             continue;
-        roll -= std::max(0.0f, _settings.weights[index]);
+        roll -= std::max(0.0f, settings.weights[index]);
         if (roll <= 0.0f)
             return power;
     }
@@ -676,9 +677,9 @@ Power PickWeightedPower(BonusRng& rng, uint8 selectedMask, bool wantExotic)
 Power PickPower(BonusRng& rng, uint8 selectedMask, Settings const& settings)
 {
     bool wantExotic = rng.RollChance(100.0f - settings.ordinaryChance);
-    Power power = PickWeightedPower(rng, selectedMask, wantExotic);
+    Power power = PickWeightedPower(rng, selectedMask, wantExotic, settings);
     if (power == Power::Count)
-        power = PickWeightedPower(rng, selectedMask, !wantExotic);
+        power = PickWeightedPower(rng, selectedMask, !wantExotic, settings);
     return power;
 }
 

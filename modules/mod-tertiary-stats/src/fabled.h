@@ -147,7 +147,7 @@ struct Settings
     uint32 ghostwalkDelayMs = 6000;
     float ghostwalkSpeedPct = 40.0f;
 
-    std::string keeperExtraSpells;           // csv of additional spell ids to keep
+    void SetKeeperExtraSpells(std::string csv);
     bool IsKeeperExtraSpell(uint32 spellId) const;
 
     uint32 vengefulPhaseMs = 10000;
@@ -168,8 +168,7 @@ struct Settings
     uint32 bloodMagicDebtDurationMs = 10000;
 
 private:
-    mutable std::string _keeperExtraSpellsCacheCsv;
-    mutable std::unordered_set<uint32> _keeperExtraSpellsCache;
+    std::unordered_set<uint32> _keeperExtraSpells;
 };
 
 Settings const& GetSettings();
