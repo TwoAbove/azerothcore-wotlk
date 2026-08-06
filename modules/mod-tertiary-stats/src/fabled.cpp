@@ -316,7 +316,8 @@ void LoadSettings()
     _settings.ghostwalkDelayMs = sConfigMgr->GetOption<uint32>("TertiaryStats.Fabled.Ghostwalk.DelayMs", 6000);
     _settings.ghostwalkSpeedPct = std::max(0.0f, sConfigMgr->GetOption<float>("TertiaryStats.Fabled.Ghostwalk.SpeedPct", 40.0f));
 
-    _settings.keeperExtraSpells = sConfigMgr->GetOption<std::string>("TertiaryStats.Fabled.Keeper.ExtraSpells", "");
+    _settings.SetKeeperExtraSpells(
+        sConfigMgr->GetOption<std::string>("TertiaryStats.Fabled.Keeper.ExtraSpells", ""));
 
     _settings.vengefulPhaseMs = sConfigMgr->GetOption<uint32>("TertiaryStats.Fabled.VengefulGhost.PhaseMs", 10000);
     _settings.vengefulLockoutMs = sConfigMgr->GetOption<uint32>("TertiaryStats.Fabled.VengefulGhost.LockoutMs", 600000);

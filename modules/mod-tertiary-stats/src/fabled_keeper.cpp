@@ -219,7 +219,7 @@ public:
         }
 
         _settingsSaved = true;
-        TestSettings(actor).keeperExtraSpells.clear();
+        TestSettings(actor).SetKeeperExtraSpells({});
 
         Item* item = Test::EquipFabledTrinket(actor, Effect::Keeper);
         context.Expect(item != nullptr, "Keeper fabled trinket equipped");
@@ -269,7 +269,7 @@ public:
         context.Expect(elixir->GetDuration() == elixirMaxDuration,
             "elapsed compensation is capped at the original maximum");
 
-        TestSettings(actor).keeperExtraSpells = " 1243 ";
+        TestSettings(actor).SetKeeperExtraSpells(" 1243 ");
         actor->RemoveAurasDueToSpell(TEST_EXTRA_SPELL);
         actor->CastSpell(actor, TEST_EXTRA_SPELL, true);
         Aura* managedExtra = actor->GetAura(TEST_EXTRA_SPELL);
@@ -373,15 +373,14 @@ private:
 };
 } // namespace
 
+void Settings::SetKeeperExtraSpells(std::string csv)
+{
+    _keeperExtraSpells = ParseExtraSpells(csv);
+}
+
 bool Settings::IsKeeperExtraSpell(uint32 spellId) const
 {
-    if (_keeperExtraSpellsCacheCsv != keeperExtraSpells)
-    {
-        _keeperExtraSpellsCache = ParseExtraSpells(keeperExtraSpells);
-        _keeperExtraSpellsCacheCsv = keeperExtraSpells;
-    }
-
-    return _keeperExtraSpellsCache.contains(spellId);
+    return _keeperExtraSpells.contains(spellId);
 }
 
 std::unique_ptr<Script> MakeKeeper()
