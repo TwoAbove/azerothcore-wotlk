@@ -2020,6 +2020,7 @@ public:
         PLAYERHOOK_ON_UNEQUIP_ITEM,
         PLAYERHOOK_ON_ENVIRONMENTAL_DAMAGE,
         PLAYERHOOK_ON_PLAYER_JUST_DIED,
+        PLAYERHOOK_ON_PLAYER_RESURRECT,
         PLAYERHOOK_CAN_ITEM_LOSE_DURABILITY,
         PLAYERHOOK_CAN_ATTACK_WHILE_MOUNTED,
         PLAYERHOOK_CAN_USE_GAMEOBJECT_WHILE_MOUNTED,
@@ -2187,6 +2188,13 @@ public:
             Fabled::HandleDeath(player);
     }
 
+    void OnPlayerResurrect(Player* player, float /*restorePercent*/,
+        bool& /*applySickness*/) override
+    {
+        if (_settings.enabled && _dbcReady)
+            Fabled::HandleResurrect(player);
+    }
+
     bool CanAttackWhileMounted(Player* player, Unit* victim, bool meleeAttack) override
     {
         return _settings.enabled && _dbcReady
@@ -2325,6 +2333,7 @@ public:
         if (!_settings.enabled || !_dbcReady || !player || !aura)
             return;
 
+        Fabled::HandleAuraApply(player, aura);
         SpellInfo const* spellInfo = aura->GetSpellInfo();
         TertiaryState* state = FindState(player);
         if (state && IsAllStatPercentAura(spellInfo))
@@ -2343,6 +2352,8 @@ public:
     void OnAuraRemove(Unit* unit, AuraApplication* aurApp, AuraRemoveMode /*mode*/) override
     {
         Player* player = unit ? unit->ToPlayer() : nullptr;
+        if (_settings.enabled && _dbcReady && player && aurApp)
+            Fabled::HandleAuraRemove(player, aurApp->GetBase());
         TertiaryState* state = player ? FindState(player) : nullptr;
         if (state && aurApp && aurApp->GetBase()->GetOwner() == player)
             RemovePeriodicArea(*state, aurApp->GetBase());

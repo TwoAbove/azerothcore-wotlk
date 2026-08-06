@@ -270,7 +270,6 @@ Settings& MutableSettings()
 void Runtime::Advance(uint64 ms)
 {
     AdvanceDeadline(ghostwalkFadeAtMs, ms);
-    AdvanceDeadline(keeperNextScanMs, ms);
     AdvanceDeadline(vengefulPhaseEndMs, ms);
     AdvanceDeadline(overkillExpiresMs, ms);
 }
@@ -314,7 +313,6 @@ void LoadSettings()
     _settings.ghostwalkDelayMs = sConfigMgr->GetOption<uint32>("TertiaryStats.Fabled.Ghostwalk.DelayMs", 6000);
     _settings.ghostwalkSpeedPct = std::max(0.0f, sConfigMgr->GetOption<float>("TertiaryStats.Fabled.Ghostwalk.SpeedPct", 40.0f));
 
-    _settings.keeperScanIntervalMs = std::max<uint32>(500, sConfigMgr->GetOption<uint32>("TertiaryStats.Fabled.Keeper.ScanIntervalMs", 2000));
     _settings.keeperExtraSpells = sConfigMgr->GetOption<std::string>("TertiaryStats.Fabled.Keeper.ExtraSpells", "");
     LoadKeeperExtraSpells(_settings.keeperExtraSpells);
 
@@ -494,6 +492,26 @@ void HandleModifyAuraEffectMask(Player* player, Aura const* aura, uint8& effectM
         });
 }
 
+void HandleAuraApply(Player* player, Aura* aura)
+{
+    if (!_ready || !player || !aura)
+        return;
+
+    Runtime* runtime = FindRuntime(player);
+    if (runtime && runtime->mask)
+        ForEachActive(*runtime, [&](Script& script) { script.OnAuraApply(player, *runtime, aura); });
+}
+
+void HandleAuraRemove(Player* player, Aura* aura)
+{
+    if (!_ready || !player || !aura)
+        return;
+
+    Runtime* runtime = FindRuntime(player);
+    if (runtime && runtime->mask)
+        ForEachActive(*runtime, [&](Script& script) { script.OnAuraRemove(player, *runtime, aura); });
+}
+
 void HandleEnvironmentalDamage(Player* player, EnviromentalDamage type, uint32& damage)
 {
     if (!_ready || !player)
@@ -599,6 +617,16 @@ void HandleDeath(Player* player)
     Runtime* runtime = FindRuntime(player);
     if (runtime && runtime->mask)
         ForEachActive(*runtime, [&](Script& script) { script.OnDeath(player, *runtime); });
+}
+
+void HandleResurrect(Player* player)
+{
+    if (!_ready || !player)
+        return;
+
+    Runtime* runtime = FindRuntime(player);
+    if (runtime && runtime->mask)
+        ForEachActive(*runtime, [&](Script& script) { script.OnResurrect(player, *runtime); });
 }
 
 void AdvanceClock(Player* player, uint64 ms)

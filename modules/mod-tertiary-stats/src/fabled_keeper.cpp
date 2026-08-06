@@ -4,7 +4,6 @@
 #include "fabled.h"
 #include "fabled_test_utils.h"
 
-#include "Creature.h"
 #include "ItemTemplate.h"
 #include "ObjectMgr.h"
 #include "Player.h"
@@ -110,24 +109,53 @@ bool IsWellFedOrScroll(AuraApplication const* application)
         && aura->GetMaxDuration() >= MIN_WELL_FED_DURATION_MS;
 }
 
-void RestoreManaged(Player* player, Runtime& runtime)
+void TrackAura(Player* player, Runtime& runtime, Aura* aura)
 {
-    if (player)
-    {
-        for (KeeperAuraIdentity const& identity : runtime.keeperManaged)
-        {
-            AuraApplication* application = player->GetAuraApplication(identity.spellId,
-                identity.casterGuid, identity.castItemGuid, identity.effectMask);
-            Aura* aura = application ? application->GetBase() : nullptr;
-            if (aura && aura->GetInstanceId() == identity.instanceId)
-            {
-                aura->SetMaxDuration(identity.maxDuration);
-                aura->SetDuration(identity.duration);
-            }
-        }
-    }
+    if (!player || !player->IsAlive() || !aura || aura->GetMaxDuration() <= 0
+        || aura->GetDuration() <= 0 || IsDrumAura(aura))
+        return;
 
-    runtime.keeperManaged.clear();
+    AuraApplication const* application = aura->GetApplicationOfTarget(player->GetGUID());
+    if (!application)
+        return;
+
+    std::shared_ptr<std::unordered_set<uint32> const> extraSpells =
+        std::atomic_load(&_extraSpells);
+    uint32 spellId = aura->GetId();
+    bool extraSpell = extraSpells->find(spellId) != extraSpells->end();
+    if (!extraSpell && !IsElixirOrFlask(spellId) && !IsWellFedOrScroll(application))
+        return;
+
+    auto managed = std::find_if(runtime.keeperManaged.begin(), runtime.keeperManaged.end(),
+        [aura](KeeperAuraState const& state) { return state.aura == aura; });
+    if (managed == runtime.keeperManaged.end())
+        runtime.keeperManaged.push_back({ aura, aura->GetMaxDuration() });
+    else
+        managed->maxDuration = aura->GetMaxDuration();
+}
+
+void TrackAppliedAuras(Player* player, Runtime& runtime)
+{
+    if (!player || !player->IsAlive())
+        return;
+
+    for (auto const& [spellId, application] : player->GetAppliedAuras())
+    {
+        (void)spellId;
+        TrackAura(player, runtime, application ? application->GetBase() : nullptr);
+    }
+}
+
+void ForgetAura(Runtime& runtime, Aura const* aura)
+{
+    std::erase_if(runtime.keeperManaged,
+        [aura](KeeperAuraState const& state) { return state.aura == aura; });
+}
+
+bool IsTracked(Runtime const& runtime, Aura const* aura)
+{
+    return std::any_of(runtime.keeperManaged.begin(), runtime.keeperManaged.end(),
+        [aura](KeeperAuraState const& state) { return state.aura == aura; });
 }
 
 class KeeperScript final : public Script
@@ -137,64 +165,49 @@ public:
 
     void OnRefresh(Player* player, Runtime& runtime, bool active) override
     {
+        runtime.keeperManaged.clear();
         if (active)
+            TrackAppliedAuras(player, runtime);
+    }
+
+    void OnAuraApply(Player* player, Runtime& runtime, Aura* aura) override
+    {
+        TrackAura(player, runtime, aura);
+    }
+
+    void OnAuraRemove(Player* /*player*/, Runtime& runtime, Aura* aura) override
+    {
+        ForgetAura(runtime, aura);
+    }
+
+    void OnUpdate(Player* player, Runtime& runtime, uint32 diffMs, uint64 /*nowMs*/) override
+    {
+        if (!player || !player->IsAlive())
         {
-            if (!runtime.keeperNextScanMs)
-                runtime.keeperNextScanMs = Now();
+            runtime.keeperManaged.clear();
             return;
         }
 
-        RestoreManaged(player, runtime);
-        runtime.keeperNextScanMs = 0;
-    }
-
-    void OnUpdate(Player* player, Runtime& runtime, uint32 /*diffMs*/, uint64 nowMs) override
-    {
-        if (!player || (runtime.keeperNextScanMs && nowMs < runtime.keeperNextScanMs))
-            return;
-
-        Settings const& settings = GetSettings();
-        runtime.keeperNextScanMs = nowMs + settings.keeperScanIntervalMs;
-        std::shared_ptr<std::unordered_set<uint32> const> extraSpells =
-            std::atomic_load(&_extraSpells);
-
-        Unit::AuraApplicationMap const& applications = player->GetAppliedAuras();
-        for (auto const& [spellId, application] : applications)
+        for (KeeperAuraState const& state : runtime.keeperManaged)
         {
-            Aura* aura = application ? application->GetBase() : nullptr;
-            if (!aura || IsDrumAura(aura))
+            int32 duration = state.aura->GetDuration();
+            if (duration <= 0)
                 continue;
 
-            bool extraSpell = extraSpells->find(spellId) != extraSpells->end();
-            if (!extraSpell && !IsElixirOrFlask(spellId) && !IsWellFedOrScroll(application))
-                continue;
-
-            KeeperAuraIdentity identity{ spellId, aura->GetCasterGUID(), aura->GetCastItemGUID(),
-                aura->GetInstanceId(), application->GetEffectMask(), aura->GetMaxDuration(),
-                aura->GetDuration() };
-            auto sameAura = [&](KeeperAuraIdentity const& managed)
-            {
-                return managed.spellId == identity.spellId
-                    && managed.casterGuid == identity.casterGuid
-                    && managed.castItemGuid == identity.castItemGuid
-                    && managed.instanceId == identity.instanceId
-                    && managed.effectMask == identity.effectMask;
-            };
-            if (std::find_if(runtime.keeperManaged.begin(), runtime.keeperManaged.end(), sameAura)
-                == runtime.keeperManaged.end())
-                runtime.keeperManaged.push_back(identity);
-
-            aura->SetMaxDuration(-1);
-            aura->SetDuration(-1);
+            int64 compensated = int64(duration) + diffMs;
+            state.aura->SetDuration(int32(std::min<int64>(compensated, state.maxDuration)));
         }
     }
 
-    void OnDeath(Player* player, Runtime& runtime) override
+    void OnDeath(Player* /*player*/, Runtime& runtime) override
     {
-        RestoreManaged(player, runtime);
-        runtime.keeperNextScanMs = Now() + GetSettings().keeperScanIntervalMs;
+        runtime.keeperManaged.clear();
     }
 
+    void OnResurrect(Player* player, Runtime& runtime) override
+    {
+        TrackAppliedAuras(player, runtime);
+    }
 };
 
 class KeeperTestSuite final : public TestHarness::Suite
@@ -213,13 +226,8 @@ public:
 
         _savedSettings = GetSettings();
         _settingsSaved = true;
-        MutableSettings().keeperScanIntervalMs = 50;
         MutableSettings().keeperExtraSpells.clear();
         LoadKeeperExtraSpells(MutableSettings().keeperExtraSpells);
-
-        if (Creature* dummy = context.SpawnDummy())
-            _dummyGuid = dummy->GetGUID();
-        context.Expect(bool(_dummyGuid), "keeper test dummy spawned");
 
         Item* item = Test::EquipFabledTrinket(actor, Effect::Keeper);
         context.Expect(item != nullptr, "Keeper fabled trinket equipped");
@@ -245,84 +253,99 @@ public:
             return;
         }
 
-        _elixirMaxDuration = elixir->GetMaxDuration();
-        _ordinaryMaxDuration = ordinary->GetMaxDuration();
-        context.Expect(_ordinaryMaxDuration > 0, "ordinary control buff starts finite");
-        AdvanceClock(actor, MutableSettings().keeperScanIntervalMs + 1);
-        _stage = Stage::InitialScan;
-    }
+        Runtime& runtime = GetRuntime(actor);
+        int32 elixirMaxDuration = elixir->GetMaxDuration();
+        int32 ordinaryMaxDuration = ordinary->GetMaxDuration();
+        context.Expect(elixirMaxDuration > TEST_FROZEN_DURATION_MS
+                && ordinaryMaxDuration > TEST_FROZEN_DURATION_MS,
+            "test buffs start with finite persistable durations");
+        context.Expect(IsTracked(runtime, elixir) && !IsTracked(runtime, ordinary),
+            "aura apply hook tracks only Keeper-eligible buffs");
 
-    void Update(TestHarness::Context& context, uint32 diff) override
-    {
-        if (_stage == Stage::Done)
-            return;
+        elixir->SetDuration(TEST_FROZEN_DURATION_MS - TEST_ELAPSED_MS);
+        ordinary->SetDuration(TEST_FROZEN_DURATION_MS - TEST_ELAPSED_MS);
+        HandleUpdate(actor, TEST_ELAPSED_MS);
+        context.Expect(elixir->GetDuration() == TEST_FROZEN_DURATION_MS
+                && elixir->GetMaxDuration() == elixirMaxDuration,
+            "elapsed compensation pauses a finite aura without making it permanent");
+        context.Expect(ordinary->GetDuration() == TEST_FROZEN_DURATION_MS - TEST_ELAPSED_MS
+                && ordinary->GetMaxDuration() == ordinaryMaxDuration,
+            "elapsed compensation leaves an ordinary aura unchanged");
 
-        Player* actor = context.GetActor();
-        if (!actor)
+        elixir->SetDuration(elixirMaxDuration - 100);
+        HandleUpdate(actor, TEST_ELAPSED_MS);
+        context.Expect(elixir->GetDuration() == elixirMaxDuration,
+            "elapsed compensation is capped at the original maximum");
+
+        MutableSettings().keeperExtraSpells = " 1243 ";
+        LoadKeeperExtraSpells(MutableSettings().keeperExtraSpells);
+        actor->RemoveAurasDueToSpell(TEST_EXTRA_SPELL);
+        actor->CastSpell(actor, TEST_EXTRA_SPELL, true);
+        Aura* managedExtra = actor->GetAura(TEST_EXTRA_SPELL);
+        context.Expect(managedExtra && IsTracked(runtime, managedExtra)
+                && managedExtra->GetMaxDuration() == ordinaryMaxDuration,
+            "configured aura apply hook records a finite application");
+        if (!managedExtra)
         {
-            context.Fail("headless actor remains available");
             Cleanup(context);
             return;
         }
 
-        _elapsed += diff;
-        if (_elapsed < 100)
-            return;
-        _elapsed = 0;
-        HandleUpdate(actor, diff);
-
-        if (_stage == Stage::InitialScan)
+        actor->RemoveAurasDueToSpell(TEST_EXTRA_SPELL);
+        context.Expect(runtime.keeperManaged.size() == 1 && IsTracked(runtime, elixir),
+            "aura remove hook forgets only the exact removed application");
+        actor->CastSpell(actor, TEST_EXTRA_SPELL, true);
+        Aura* replacement = actor->GetAura(TEST_EXTRA_SPELL);
+        context.Expect(replacement && IsTracked(runtime, replacement),
+            "a replacement application receives its own managed identity");
+        if (!replacement)
         {
-            Aura* elixir = actor->GetAura(TEST_ELIXIR_SPELL);
-            Aura* ordinary = actor->GetAura(TEST_EXTRA_SPELL);
-            context.Expect(elixir && elixir->GetMaxDuration() == -1 && elixir->GetDuration() == -1,
-                "guardian elixir becomes permanent after Keeper scan");
-            context.Expect(ordinary && ordinary->GetMaxDuration() == _ordinaryMaxDuration
-                    && ordinary->GetDuration() != -1,
-                "non-whitelisted magic buff keeps its finite duration");
-            if (!elixir || !ordinary)
-            {
-                Cleanup(context);
-                return;
-            }
-            for (KeeperAuraIdentity const& identity : GetRuntime(actor).keeperManaged)
-            {
-                if (identity.spellId == TEST_ELIXIR_SPELL)
-                {
-                    _elixirMaxDuration = identity.maxDuration;
-                    _elixirDuration = identity.duration;
-                    break;
-                }
-            }
-
-            MutableSettings().keeperExtraSpells = " 1243 ";
-            LoadKeeperExtraSpells(MutableSettings().keeperExtraSpells);
-            AdvanceClock(actor, MutableSettings().keeperScanIntervalMs + 1);
-            _stage = Stage::ExtraSpellScan;
+            Cleanup(context);
             return;
         }
 
-        Aura* extra = actor->GetAura(TEST_EXTRA_SPELL);
-        context.Expect(extra && extra->GetMaxDuration() == -1 && extra->GetDuration() == -1,
-            "keeperExtraSpells CSV makes the configured buff permanent");
-        uint64 managedInstanceId = extra ? extra->GetInstanceId() : 0;
-        actor->RemoveAurasDueToSpell(TEST_EXTRA_SPELL);
-        actor->CastSpell(actor, TEST_EXTRA_SPELL, true);
-        Aura* replacement = actor->GetAura(TEST_EXTRA_SPELL);
-        context.Expect(replacement && replacement->GetInstanceId() != managedInstanceId,
-            "a later application has a distinct aura identity");
-
+        replacement->SetDuration(TEST_FROZEN_DURATION_MS);
         Test::UnequipFabled(actor, Effect::Keeper);
         _equipped = false;
-        Runtime& runtime = GetRuntime(actor);
-        Aura* restoredElixir = actor->GetAura(TEST_ELIXIR_SPELL);
-        context.Expect(restoredElixir
-                && restoredElixir->GetMaxDuration() == _elixirMaxDuration
-                && restoredElixir->GetDuration() == _elixirDuration
-                && actor->HasAura(TEST_EXTRA_SPELL) && runtime.keeperManaged.empty(),
-            "unequipping restores managed timers and preserves a later recast");
+        context.Expect(runtime.keeperManaged.empty()
+                && replacement->GetDuration() == TEST_FROZEN_DURATION_MS
+                && replacement->GetMaxDuration() == ordinaryMaxDuration,
+            "unequipping releases current finite auras without replacing or removing them");
+
+        item = Test::EquipFabledTrinket(actor, Effect::Keeper);
+        _equipped = item != nullptr;
+        context.Expect(item && IsTracked(runtime, elixir) && IsTracked(runtime, replacement),
+            "equipment refresh discovers existing finite auras as relog does");
+        if (!item)
+        {
+            Cleanup(context);
+            return;
+        }
+
+        int32 elixirBeforeDeath = elixir->GetDuration();
+        int32 replacementBeforeDeath = replacement->GetDuration();
+        HandleDeath(actor);
+        elixir->SetDuration(elixirBeforeDeath - TEST_ELAPSED_MS);
+        replacement->SetDuration(replacementBeforeDeath - TEST_ELAPSED_MS);
+        HandleUpdate(actor, TEST_ELAPSED_MS);
+        context.Expect(runtime.keeperManaged.empty()
+                && elixir->GetDuration() == elixirBeforeDeath - TEST_ELAPSED_MS
+                && replacement->GetDuration() == replacementBeforeDeath - TEST_ELAPSED_MS,
+            "death releases surviving aura timers while Keeper remains equipped");
+
+        HandleResurrect(actor);
+        context.Expect(IsTracked(runtime, elixir) && IsTracked(runtime, replacement),
+            "resurrection re-enrolls surviving eligible auras without re-equipping");
+        int32 elixirAfterResurrect = elixir->GetDuration();
+        elixir->SetDuration(elixirAfterResurrect - TEST_ELAPSED_MS);
+        HandleUpdate(actor, TEST_ELAPSED_MS);
+        context.Expect(elixir->GetDuration() == elixirAfterResurrect,
+            "a surviving eligible aura pauses again after resurrection");
+
         Cleanup(context);
     }
+
+    void Update(TestHarness::Context& /*context*/, uint32 /*diff*/) override { }
 
     void Cancel(TestHarness::Context& context) override
     {
@@ -330,12 +353,8 @@ public:
     }
 
 private:
-    enum class Stage
-    {
-        InitialScan,
-        ExtraSpellScan,
-        Done
-    };
+    static constexpr int32 TEST_FROZEN_DURATION_MS = 30000;
+    static constexpr int32 TEST_ELAPSED_MS = 1234;
 
     void Cleanup(TestHarness::Context& context, bool finish = true)
     {
@@ -353,23 +372,15 @@ private:
             LoadKeeperExtraSpells(MutableSettings().keeperExtraSpells);
             _settingsSaved = false;
         }
-        if (_dummyGuid)
-            context.DespawnDummy(_dummyGuid);
 
-        _stage = Stage::Done;
+        _equipped = false;
         if (finish)
             context.Finish();
     }
 
-    Stage _stage = Stage::Done;
     Settings _savedSettings;
     bool _settingsSaved = false;
     bool _equipped = false;
-    ObjectGuid _dummyGuid;
-    uint32 _elapsed = 0;
-    int32 _ordinaryMaxDuration = 0;
-    int32 _elixirMaxDuration = 0;
-    int32 _elixirDuration = 0;
 };
 } // namespace
 

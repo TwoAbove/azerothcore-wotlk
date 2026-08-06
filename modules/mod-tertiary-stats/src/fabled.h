@@ -144,7 +144,6 @@ struct Settings
     uint32 ghostwalkDelayMs = 6000;
     float ghostwalkSpeedPct = 40.0f;
 
-    uint32 keeperScanIntervalMs = 2000;
     std::string keeperExtraSpells;           // csv of additional spell ids to keep
 
     uint32 vengefulPhaseMs = 10000;
@@ -170,15 +169,10 @@ Settings const& GetSettings();
 // Test support: suites may tweak knobs, restoring them on finish.
 Settings& MutableSettings();
 
-struct KeeperAuraIdentity
+struct KeeperAuraState
 {
-    uint32 spellId = 0;
-    ObjectGuid casterGuid;
-    ObjectGuid castItemGuid;
-    uint64 instanceId = 0;
-    uint8 effectMask = 0;
+    Aura* aura = nullptr;
     int32 maxDuration = 0;
-    int32 duration = 0;
 };
 
 // Per-player fabled state. All *Ms fields are absolute GameTime milliseconds.
@@ -191,8 +185,7 @@ struct Runtime : public DataMap::Base
     uint64 ghostwalkFadeAtMs = 0;            // 0 = not armed
 
 
-    uint64 keeperNextScanMs = 0;
-    std::vector<KeeperAuraIdentity> keeperManaged;
+    std::vector<KeeperAuraState> keeperManaged;
 
     uint64 vengefulPhaseEndMs = 0;
     bool vengefulPhaseActive = false;
@@ -236,7 +229,9 @@ public:
     // Called before an aura is initially applied. Scripts may remove effects.
     virtual void OnModifyAuraEffectMask(Player* /*player*/, Runtime& /*runtime*/,
         Aura const* /*aura*/, uint8& /*effectMask*/) { }
-
+    // Application lifetime hooks; remove is delivered before the Aura is destroyed.
+    virtual void OnAuraApply(Player* /*player*/, Runtime& /*runtime*/, Aura* /*aura*/) { }
+    virtual void OnAuraRemove(Player* /*player*/, Runtime& /*runtime*/, Aura* /*aura*/) { }
 
     // Called every player update tick while the effect is equipped.
     virtual void OnUpdate(Player* /*player*/, Runtime& /*runtime*/, uint32 /*diffMs*/, uint64 /*nowMs*/) { }
@@ -274,6 +269,7 @@ public:
 
     // The player died for real (Vengeful Ghost could not or did not intervene).
     virtual void OnDeath(Player* /*player*/, Runtime& /*runtime*/) { }
+    virtual void OnResurrect(Player* /*player*/, Runtime& /*runtime*/) { }
 
 private:
     Effect _effect;
@@ -314,6 +310,8 @@ void HandleDealtDamageFinal(Player* attacker, Unit* victim, uint32 damage,
     SpellInfo const* spellInfo, DamageKind kind);
 void HandleIncomingDamage(Player* victim, Unit* attacker, uint32& damage);
 void HandleModifyAuraEffectMask(Player* player, Aura const* aura, uint8& effectMask);
+void HandleAuraApply(Player* player, Aura* aura);
+void HandleAuraRemove(Player* player, Aura* aura);
 void HandleEnvironmentalDamage(Player* player, EnviromentalDamage type, uint32& damage);
 void HandleSpellCast(Player* caster, Spell* spell);
 void HandleSpellCastCancel(Player* caster, Spell* spell);
@@ -322,6 +320,7 @@ bool HandleCanCastWhileMounted(Spell const* spell);
 bool HandleCanAttackWhileMounted(Player* player, Unit* victim, bool meleeAttack);
 bool HandleCanUseGameObjectWhileMounted(Player* player, GameObject* gameObject);
 void HandleDeath(Player* player);
+void HandleResurrect(Player* player);
 
 // Test support.
 void AdvanceClock(Player* player, uint64 ms);
