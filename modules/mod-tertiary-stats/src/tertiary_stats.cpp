@@ -42,6 +42,7 @@
 #include "SpellScript.h"
 #include "test_harness.h"
 #include "fabled.h"
+#include "item_bonus_seed.h"
 #include "Util.h"
 #include "WorldPacket.h"
 
@@ -97,10 +98,32 @@ constexpr uint32 TEST_SUFFIX_ITEM_ENTRY = 25100; // Liege Blade, native random s
 
 constexpr TriggerCastFlags TERTIARY_TRIGGER_FLAGS =
     TriggerCastFlags(TRIGGERED_FULL_MASK | TRIGGERED_DISALLOW_PROC_EVENTS);
+bool _dbcReady = false;
+bool _spellsValidated = false;
 bool IsTertiaryOutput(SpellInfo const* spellInfo)
 {
     return spellInfo && spellInfo->Id >= SPELL_AVOIDANCE_PASSIVE
         && spellInfo->Id <= Fabled::SPELL_OVERKILL_DAMAGE;
+}
+
+bool ValidateTertiarySpells()
+{
+    if (_spellsValidated)
+        return _dbcReady;
+    _spellsValidated = true;
+
+    _dbcReady = true;
+    for (uint32 spellId = SPELL_AVOIDANCE_PASSIVE; spellId <= SPELL_ECHO_AURA; ++spellId)
+        if (!sSpellMgr->GetSpellInfo(spellId))
+            _dbcReady = false;
+    if (!sSpellMgr->GetSpellInfo(SPELL_TEMPO_COOLDOWN))
+        _dbcReady = false;
+
+    if (_dbcReady)
+        LOG_INFO("module", "TertiaryStats: validated 11 ordinary custom spells");
+    else
+        LOG_ERROR("module", "TertiaryStats: ordinary custom spell DBC rows are missing; item rolls and effects are disabled");
+    return _dbcReady;
 }
 
 
@@ -179,7 +202,6 @@ struct BonusDefinition
 };
 
 Settings _settings;
-bool _dbcReady = false;
 uint32 _settingsRevision = 0;
 
 struct PeriodicAreaSource
@@ -562,8 +584,10 @@ bool IsEligibleEquipment(ItemTemplate const* itemTemplate)
         return false;
     if (itemTemplate->Class != ITEM_CLASS_WEAPON && itemTemplate->Class != ITEM_CLASS_ARMOR)
         return false;
-    if (itemTemplate->Quality < _settings.minQuality || itemTemplate->Quality > _settings.maxQuality
-        || itemTemplate->ItemLevel < _settings.minItemLevel || !ItemPointBudget(itemTemplate))
+    bool qualityEligible = itemTemplate->Quality == ITEM_QUALITY_HEIRLOOM
+        || (itemTemplate->Quality >= _settings.minQuality && itemTemplate->Quality <= _settings.maxQuality);
+    if (!qualityEligible || itemTemplate->ItemLevel < _settings.minItemLevel
+        || !ItemPointBudget(itemTemplate))
         return false;
     if (itemTemplate->Stackable != 1)
         return false;
@@ -988,8 +1012,7 @@ bool ReforgeFabled(Player* player, ObjectGuid sourceGuid, ObjectGuid destination
     destination->SetNotRefundable(player, true, &transaction);
     destination->ClearSoulboundTradeable(player, &transaction);
     player->RemoveTradeableItem(destination);
-    destination->SetState(ITEM_CHANGED, player);
-    player->DestroyItem(sourceBag, sourceSlot, true);
+    player->DestroyItem(sourceBag, sourceSlot, true, &transaction);
     player->ModifyMoney(-int32(cost));
     player->SaveInventoryAndGoldToDB(transaction);
     CharacterDatabase.CommitTransaction(transaction);
@@ -1065,15 +1088,16 @@ void SendTertiaryLootSnapshot(Player* player, Loot* loot)
 }
 
 void SendTertiaryAuctionSnapshot(Player* player, uint8 listType,
-    std::vector<uint32> const& itemBonusSeeds)
+    AuctionListResultView items)
 {
     uint32 generation = NextTertiaryProtocolGeneration();
     SendTertiarySnapshotMessage(player,
         Acore::StringFormat("A:C:{}:{}", generation, uint32(listType)));
-    for (uint32 index = 0; index < itemBonusSeeds.size(); ++index)
+    for (uint32 index = 0; index < items.size(); ++index)
     {
+        ItemTemplate const* itemTemplate = sObjectMgr->GetItemTemplate(items[index].itemEntry);
         std::string definition = TertiaryDefinitionWirePayload(
-            ResolvedTertiaryBonusFromSeed(itemBonusSeeds[index], player));
+            ResolvedTertiaryBonusFromSeed(items[index].itemBonusSeed, player, itemTemplate));
         if (!definition.empty())
             SendTertiarySnapshotMessage(player, Acore::StringFormat("A:R:{}:{}:{}:{}",
                 generation, uint32(listType), index + 1, definition));
@@ -1973,20 +1997,8 @@ public:
 
     void OnStartup() override
     {
-        _dbcReady = true;
-        for (uint32 spellId = SPELL_AVOIDANCE_PASSIVE; spellId <= SPELL_ECHO_AURA; ++spellId)
-            if (!sSpellMgr->GetSpellInfo(spellId))
-                _dbcReady = false;
-        if (!sSpellMgr->GetSpellInfo(SPELL_TEMPO_COOLDOWN)
-            || !sSpellMgr->GetSpellInfo(Fabled::SPELL_OVERKILL_DAMAGE))
-            _dbcReady = false;
-
-        if (!_dbcReady)
-            LOG_ERROR("module", "TertiaryStats: custom spell DBC rows are missing; item rolls and effects are disabled");
-        else
-            LOG_INFO("module", "TertiaryStats: validated 12 custom spells");
-
-        if (_dbcReady && Fabled::ValidateSpells())
+        ValidateTertiarySpells();
+        if (Fabled::ValidateSpells())
             LOG_INFO("module", "TertiaryStats: fabled effects enabled");
     }
 };
@@ -2001,6 +2013,9 @@ public:
     void OnItemBonusSeedGenerate(ItemTemplate const* itemTemplate, uint32 entropy,
         uint32& bonusSeed) override
     {
+        if (!ValidateTertiarySpells() || !Fabled::ValidateSpells())
+            return;
+
         BonusRng rng(entropy, itemTemplate->ItemId);
         bonusSeed = MakeItemBonusSeed(RollBonus(itemTemplate, rng));
         if (bonusSeed != MakeItemBonusSeed(0))
@@ -2035,9 +2050,9 @@ public:
     }
 
     void OnPlayerAfterSendAuctionList(Player* player, uint8 listType,
-        std::vector<uint32> const& itemBonusSeeds) override
+        AuctionListResultView items) override
     {
-        SendTertiaryAuctionSnapshot(player, listType, itemBonusSeeds);
+        SendTertiaryAuctionSnapshot(player, listType, items);
     }
 
 
@@ -2754,6 +2769,21 @@ public:
             "level=" + std::to_string(actor->GetLevel())
                 + " points=" + std::to_string(resolvedProfiled.pointsPerPower));
 
+        Settings savedHeirloomSettings = _settings;
+        float savedHeirloomFabledChance = Fabled::MutableSettings().chance;
+        _settings.rollChance = 100.0f;
+        _settings.ordinaryChance = 100.0f;
+        _settings.maxQuality = ITEM_QUALITY_EPIC;
+        Fabled::MutableSettings().chance = 0.0f;
+        Item* generatedHeirloom = Item::CreateItem(90000, 1, actor);
+        _settings = savedHeirloomSettings;
+        Fabled::MutableSettings().chance = savedHeirloomFabledChance;
+        context.Expect(generatedHeirloom && TertiaryBonusOf(generatedHeirloom)
+                && HeirloomProfileFromSeed(generatedHeirloom->GetBonusSeed()) == HeirloomProfile::Trinket,
+            "heirlooms remain explicitly eligible when ordinary quality eligibility ends at epic");
+        delete generatedHeirloom;
+
+
 
         Settings savedRollSettings = _settings;
         float savedDeterministicFabledChance = Fabled::MutableSettings().chance;
@@ -2802,25 +2832,36 @@ public:
         {
             reforgeSource->SetBonusSeed(
                 MakeItemBonusSeed(Fabled::BonusId(Fabled::Effect::Warcaster)));
-            reforgeSource->SetState(ITEM_CHANGED, actor);
             reforgeDestination->SetBonusSeed(MakeItemBonusSeed(fixedFleetfoot));
-            reforgeDestination->SetState(ITEM_CHANGED, actor);
+            reforgeSource->SetFlag(ITEM_FIELD_FLAGS, ITEM_FIELD_FLAG_REFUNDABLE);
+            reforgeSource->SetRefundRecipient(actor->GetGUID().GetCounter());
+            reforgeSource->SetPaidMoney(123);
+            AllowedLooterSet sourceAllowedLooters = { actor->GetGUID() };
+            reforgeSource->SetSoulboundTradeable(sourceAllowedLooters);
+            actor->AddTradeableItem(reforgeSource);
             actor->SetMoney(expectedReforgeCost + 12345);
             CharacterDatabaseTransaction fixtureTransaction = CharacterDatabase.BeginTransaction();
             actor->SaveInventoryAndGoldToDB(fixtureTransaction);
-            CharacterDatabase.CommitTransaction(fixtureTransaction);
+            CharacterDatabase.DirectCommitTransaction(fixtureTransaction);
+            CharacterDatabase.DirectExecute(
+                "REPLACE INTO `item_refund_instance` (`item_guid`, `player_guid`, `paidMoney`, `paidExtendedCost`) VALUES ({}, {}, 123, 0)",
+                reforgeSourceGuid.GetCounter(), actor->GetGUID().GetCounter());
+            CharacterDatabase.DirectExecute(
+                "REPLACE INTO `item_soulbound_trade_data` (`itemGuid`, `allowedPlayers`) VALUES ({}, '{}')",
+                reforgeSourceGuid.GetCounter(), actor->GetGUID().GetCounter());
         }
         std::string reforgeMessage;
         bool reforged = reforgeSource && reforgeDestination
             && ReforgeFabled(actor, reforgeSourceGuid, reforgeDestinationGuid, reforgeMessage);
         Item* reforgedDestination = actor->GetItemByGuid(reforgeDestinationGuid);
+        _reforgeSourceGuid = reforged ? reforgeSourceGuid : ObjectGuid::Empty;
         context.Expect(reforged && !actor->GetItemByGuid(reforgeSourceGuid)
                 && reforgedDestination
                 && Fabled::EffectFromBonusId(TertiaryBonusOf(reforgedDestination))
                     == Fabled::Effect::Warcaster
                 && reforgedDestination->IsSoulBound()
                 && actor->GetMoney() == 12345,
-            "reforging migrates a mismatched source onto its pooled destination, destroys the source, binds the destination, and charges gold",
+            "reforging destroys the source, binds the destination, and charges gold in one transaction",
             reforgeMessage);
         if (reforgedDestination)
             actor->DestroyItem(reforgedDestination->GetBagSlot(), reforgedDestination->GetSlot(), true);
@@ -2828,6 +2869,43 @@ public:
             actor->DestroyItem(leftoverSource->GetBagSlot(), leftoverSource->GetSlot(), true);
         actor->SetMoney(savedMoney);
 
+        bool rollbackSourceAdded = actor->AddItem(16958, 1);
+        Item* rollbackSource = rollbackSourceAdded ? actor->GetItemByEntry(16958) : nullptr;
+        ObjectGuid rollbackSourceGuid = rollbackSource ? rollbackSource->GetGUID() : ObjectGuid::Empty;
+        if (rollbackSource)
+        {
+            rollbackSource->SetFlag(ITEM_FIELD_FLAGS, ITEM_FIELD_FLAG_REFUNDABLE);
+            AllowedLooterSet rollbackAllowedLooters = { actor->GetGUID() };
+            rollbackSource->SetSoulboundTradeable(rollbackAllowedLooters);
+            CharacterDatabaseTransaction fixtureSave = CharacterDatabase.BeginTransaction();
+            actor->SaveInventoryAndGoldToDB(fixtureSave);
+            CharacterDatabase.DirectCommitTransaction(fixtureSave);
+            CharacterDatabase.DirectExecute(
+                "REPLACE INTO `item_refund_instance` (`item_guid`, `player_guid`, `paidMoney`, `paidExtendedCost`) VALUES ({}, {}, 1, 0)",
+                rollbackSourceGuid.GetCounter(), actor->GetGUID().GetCounter());
+            CharacterDatabase.DirectExecute(
+                "REPLACE INTO `item_soulbound_trade_data` (`itemGuid`, `allowedPlayers`) VALUES ({}, '{}')",
+                rollbackSourceGuid.GetCounter(), actor->GetGUID().GetCounter());
+
+            {
+                CharacterDatabaseTransaction discarded = CharacterDatabase.BeginTransaction();
+                actor->DestroyItem(rollbackSource->GetBagSlot(), rollbackSource->GetSlot(), false, &discarded);
+            }
+            bool refundSurvived = bool(CharacterDatabase.Query(
+                "SELECT 1 FROM `item_refund_instance` WHERE `item_guid` = {}", rollbackSourceGuid.GetCounter()));
+            bool tradeSurvived = bool(CharacterDatabase.Query(
+                "SELECT 1 FROM `item_soulbound_trade_data` WHERE `itemGuid` = {}", rollbackSourceGuid.GetCounter()));
+            context.Expect(refundSurvived && tradeSurvived,
+                "discarding item destruction leaves ancillary refund and BOP-trade rows intact");
+
+            CharacterDatabase.DirectExecute(
+                "DELETE FROM `item_refund_instance` WHERE `item_guid` = {}", rollbackSourceGuid.GetCounter());
+            CharacterDatabase.DirectExecute(
+                "DELETE FROM `item_soulbound_trade_data` WHERE `itemGuid` = {}", rollbackSourceGuid.GetCounter());
+            CharacterDatabaseTransaction fixtureCleanup = CharacterDatabase.BeginTransaction();
+            actor->SaveInventoryAndGoldToDB(fixtureCleanup);
+            CharacterDatabase.DirectCommitTransaction(fixtureCleanup);
+        }
 
 
         TertiaryState* echoState = GetState(actor);
@@ -3455,10 +3533,19 @@ public:
             rowFound = true;
         }
 
-        if (rowFound && uint16(persistedSeed & ITEM_BONUS_ID_MASK) == _expectedBonusId)
+        bool reforgeMetadataRemoved = !_reforgeSourceGuid
+            || (!CharacterDatabase.Query(
+                    "SELECT 1 FROM `item_refund_instance` WHERE `item_guid` = {}",
+                    _reforgeSourceGuid.GetCounter())
+                && !CharacterDatabase.Query(
+                    "SELECT 1 FROM `item_soulbound_trade_data` WHERE `itemGuid` = {}",
+                    _reforgeSourceGuid.GetCounter()));
+        if (rowFound && uint16(persistedSeed & ITEM_BONUS_ID_MASK) == _expectedBonusId
+            && reforgeMetadataRemoved)
         {
             context.Expect(true, "item atomically persists its bonus seed",
                 "seed=" + std::to_string(persistedSeed));
+            context.Expect(true, "reforging commits source refund and BOP-trade cleanup atomically");
             context.Finish();
             _stage = Stage::Done;
             return;
@@ -3467,8 +3554,9 @@ public:
         if (_elapsed < 5000)
             return;
 
-        context.Expect(false, "item atomically persists its bonus seed",
-            rowFound ? "seed=" + std::to_string(persistedSeed) : "item row missing");
+        context.Expect(false, "item persistence and reforge metadata cleanup complete",
+            (rowFound ? "seed=" + std::to_string(persistedSeed) : "item row missing")
+                + " reforgeMetadata=" + std::to_string(reforgeMetadataRemoved));
         context.Finish();
         _stage = Stage::Done;
     }
@@ -3592,7 +3680,6 @@ private:
     {
         uint16 bonusId = EncodeBonusId(mask, _pointBudget);
         _item->SetBonusSeed(MakeItemBonusSeed(bonusId));
-        _item->SetState(ITEM_CHANGED, actor);
         TertiaryState* state = GetState(actor);
         state->needsRefresh = true;
         return EnsureState(actor);
@@ -3609,6 +3696,7 @@ private:
     Stage _stage = Stage::Done;
     Item* _item = nullptr;
     ObjectGuid _itemGuid;
+    ObjectGuid _reforgeSourceGuid;
     ObjectGuid _dummyGuid;
     uint16 _pointBudget = 0;
     uint32 _elapsed = 0;

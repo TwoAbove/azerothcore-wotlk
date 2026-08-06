@@ -18,6 +18,7 @@
 #ifndef SCRIPT_OBJECT_PLAYER_SCRIPT_H_
 #define SCRIPT_OBJECT_PLAYER_SCRIPT_H_
 
+#include "AuctionHouseResult.h"
 #include "ScriptObject.h"
 #include "SharedDefines.h"
 #include "DBCStructure.h"
@@ -299,7 +300,7 @@ public:
     // Called before loot is sent to a player
     virtual void OnPlayerBeforeSendLoot(Player* /*player*/, ObjectGuid /*lootGuid*/, Loot* /*loot*/) { }
     virtual void OnPlayerAfterSendAuctionList(Player* /*player*/, uint8 /*listType*/,
-        std::vector<uint32> const& /*itemBonusSeeds*/) { }
+        AuctionListResultView /*items*/) { }
 
     // Called when a player gains XP (before anything is given)
     virtual void OnPlayerGiveXP(Player* /*player*/, uint32& /*amount*/, Unit* /*victim*/, uint8 /*xpSource*/) { }

@@ -3121,7 +3121,7 @@ void Player::MoveItemToInventory(ItemPosCountVec const& dest, Item* pItem, bool 
     }
 }
 
-void Player::DestroyItem(uint8 bag, uint8 slot, bool update)
+void Player::DestroyItem(uint8 bag, uint8 slot, bool update, CharacterDatabaseTransaction* trans)
 {
     Item* pItem = GetItemByPos(bag, slot);
     if (pItem)
@@ -3131,20 +3131,23 @@ void Player::DestroyItem(uint8 bag, uint8 slot, bool update)
         // This if () prevents item saving crashes if the condition for a bag to be empty before being destroyed was bypassed somehow.
         if (pItem->IsNotEmptyBag())
             for (uint8 i = 0; i < MAX_BAG_SIZE; ++i)
-                DestroyItem(slot, i, update);
+                DestroyItem(slot, i, update, trans);
 
         if (pItem->IsWrapped())
         {
             CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_GIFT);
             stmt->SetData(0, pItem->GetGUID().GetCounter());
-            CharacterDatabase.Execute(stmt);
+            if (trans)
+                (*trans)->Append(stmt);
+            else
+                CharacterDatabase.Execute(stmt);
         }
 
         RemoveEnchantmentDurations(pItem);
         RemoveItemDurations(pItem);
 
-        pItem->SetNotRefundable(this);
-        pItem->ClearSoulboundTradeable(this);
+        pItem->SetNotRefundable(this, true, trans);
+        pItem->ClearSoulboundTradeable(this, trans);
         RemoveTradeableItem(pItem);
 
         ApplyItemObtainSpells(pItem, false);
@@ -3199,7 +3202,7 @@ void Player::DestroyItem(uint8 bag, uint8 slot, bool update)
         // Xinef: item is removed, remove loot from storage if any
         if (ItemTemplate const* proto = pItem->GetTemplate())
             if (proto->HasFlag(ITEM_FLAG_HAS_LOOT))
-                sLootItemStorage->RemoveStoredLoot(pItem->GetGUID());
+                sLootItemStorage->RemoveStoredLoot(pItem->GetGUID(), trans);
 
         if (IsInWorld() && update)
         {

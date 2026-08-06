@@ -31,6 +31,7 @@ constexpr std::array<char const*, EFFECT_COUNT> EFFECT_NAMES = {
 
 Settings _settings;
 bool _ready = false;
+bool _spellsValidated = false;
 constexpr std::array<Effect, 1> HEAD_EFFECTS = { Effect::LeviathansGift };
 constexpr std::array<Effect, 1> CHEST_EFFECTS = { Effect::Keeper };
 constexpr std::array<Effect, 1> LEGS_EFFECTS = { Effect::Cavalier };
@@ -338,6 +339,10 @@ void LoadSettings()
 
 bool ValidateSpells()
 {
+    if (_spellsValidated)
+        return _ready;
+    _spellsValidated = true;
+
     Scripts(); // construct effect scripts; factories register their test suites
 
     _ready = true;

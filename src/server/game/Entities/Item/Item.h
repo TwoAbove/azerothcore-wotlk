@@ -214,14 +214,6 @@ enum ItemUpdateState
 
 #define MAX_ITEM_SPELLS 5
 constexpr uint32 ITEM_BONUS_SEED_UNSET = 0;
-constexpr uint32 ITEM_BONUS_SEED_VERSION = 1;
-constexpr uint32 ITEM_BONUS_SEED_VERSION_SHIFT = 24;
-constexpr uint32 ITEM_BONUS_ID_MASK = 0xFFFF;
-
-constexpr uint32 MakeItemBonusSeed(uint16 bonusId)
-{
-    return (ITEM_BONUS_SEED_VERSION << ITEM_BONUS_SEED_VERSION_SHIFT) | bonusId;
-}
 
 bool ItemCanGoIntoBag(ItemTemplate const* proto, ItemTemplate const* pBagProto);
 
@@ -307,7 +299,7 @@ public:
     [[nodiscard]] uint32 GetItemPropertySeed() const { return GetUInt32Value(ITEM_FIELD_PROPERTY_SEED); }
     [[nodiscard]] uint32 GetItemSuffixFactor() const { return GetItemPropertySeed(); }
     [[nodiscard]] uint32 GetBonusSeed() const { return m_bonusSeed; }
-    void SetBonusSeed(uint32 seed) { m_bonusSeed = seed; }
+    void SetBonusSeed(uint32 seed);
     void SetItemRandomProperties(int32 randomPropId);
     void UpdateItemSuffixFactor();
     static int32 GenerateItemRandomPropertyId(uint32 item_id);

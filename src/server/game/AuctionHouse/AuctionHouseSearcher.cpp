@@ -174,7 +174,7 @@ void AuctionHouseWorkerThread::SearchListRequest(AuctionSearchListRequest const&
         for (; itr != auctionEntries.end(); ++itr)
         {
             (*itr)->BuildAuctionInfo(searchResponse->packet);
-            searchResponse->itemBonusSeeds.push_back((*itr)->item.bonusSeed);
+            searchResponse->items.push_back({ (*itr)->Id, (*itr)->item.guid, (*itr)->item.entry, (*itr)->item.bonusSeed });
 
             if (++count >= MAX_AUCTIONS_PER_PAGE)
                 break;
@@ -190,7 +190,7 @@ void AuctionHouseWorkerThread::SearchListRequest(AuctionSearchListRequest const&
             std::shared_ptr<SearchableAuctionEntry> const& Aentry = pair.second;
             ++count;
             Aentry->BuildAuctionInfo(searchResponse->packet);
-            searchResponse->itemBonusSeeds.push_back(Aentry->item.bonusSeed);
+            searchResponse->items.push_back({ Aentry->Id, Aentry->item.guid, Aentry->item.entry, Aentry->item.bonusSeed });
 
             if (count >= MAX_GETALL_RETURN)
                 break;
@@ -226,7 +226,7 @@ void AuctionHouseWorkerThread::SearchOwnerListRequest(AuctionSearchOwnerListRequ
 
         std::shared_ptr<SearchableAuctionEntry> const& auctionEntry = pair.second;
         auctionEntry->BuildAuctionInfo(searchResponse->packet);
-        searchResponse->itemBonusSeeds.push_back(auctionEntry->item.bonusSeed);
+        searchResponse->items.push_back({ auctionEntry->Id, auctionEntry->item.guid, auctionEntry->item.entry, auctionEntry->item.bonusSeed });
         ++count;
         ++totalcount;
     }
@@ -259,7 +259,7 @@ void AuctionHouseWorkerThread::SearchBidderListRequest(AuctionSearchBidderListRe
 
         std::shared_ptr<SearchableAuctionEntry> const& auctionEntry = itr->second;
         auctionEntry->BuildAuctionInfo(searchResponse->packet);
-        searchResponse->itemBonusSeeds.push_back(auctionEntry->item.bonusSeed);
+        searchResponse->items.push_back({ auctionEntry->Id, auctionEntry->item.guid, auctionEntry->item.entry, auctionEntry->item.bonusSeed });
         ++count;
         ++totalcount;
     }
@@ -271,7 +271,7 @@ void AuctionHouseWorkerThread::SearchBidderListRequest(AuctionSearchBidderListRe
 
         std::shared_ptr<SearchableAuctionEntry> const& auctionEntry = pair.second;
         auctionEntry->BuildAuctionInfo(searchResponse->packet);
-        searchResponse->itemBonusSeeds.push_back(auctionEntry->item.bonusSeed);
+        searchResponse->items.push_back({ auctionEntry->Id, auctionEntry->item.guid, auctionEntry->item.entry, auctionEntry->item.bonusSeed });
         ++count;
         ++totalcount;
     }
@@ -366,7 +366,7 @@ void AuctionHouseSearcher::Update()
         {
             player->SendDirectMessage(&response->packet);
             sScriptMgr->OnPlayerAfterSendAuctionList(player, response->listType,
-                response->itemBonusSeeds);
+                response->items);
         }
 
         delete response;
@@ -400,6 +400,7 @@ void AuctionHouseSearcher::AddAuction(AuctionEntry const* auctionEntry)
 
     // Item info
     searchableAuctionEntry->item.entry = item->GetEntry();
+    searchableAuctionEntry->item.guid = item->GetGUID();
 
     for (uint8 i = 0; i < MAX_INSPECTED_ENCHANTMENT_SLOT; ++i)
     {

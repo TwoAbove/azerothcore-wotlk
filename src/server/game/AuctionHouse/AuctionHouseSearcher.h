@@ -19,6 +19,7 @@
 #define _AUCTION_HOUSE_SEARCHER_H
 
 #include "AuctionHouseMgr.h"
+#include "AuctionHouseResult.h"
 #include "Common.h"
 #include "Item.h"
 #include "LockedQueue.h"
@@ -69,6 +70,7 @@ struct SearchableAuctionEntryItem
 {
     std::wstring itemName[TOTAL_LOCALES];
     uint32 entry;
+    ObjectGuid guid;
     AuctionEntryItemEnchants enchants[MAX_INSPECTED_ENCHANTMENT_SLOT];
     int32 randomPropertyId;
     uint32 suffixFactor;
@@ -185,7 +187,7 @@ struct AuctionSearcherResponse
 {
     ObjectGuid playerGuid;
     uint8 listType = 0;
-    std::vector<uint32> itemBonusSeeds;
+    AuctionListResult items;
     WorldPacket packet;
 };
 
