@@ -39,7 +39,7 @@ void ClearPending(Runtime& runtime)
 }
 void CastTestDamage(Player* player, Unit* target)
 {
-    DealEffectDamage(player, target, TEST_DAMAGE, SPELL_SCHOOL_MASK_FIRE,
+    CastEffectDamage(player, target, TEST_DAMAGE, SPELL_SCHOOL_MASK_FIRE,
         SPELL_TEST_DAMAGE);
 }
 
@@ -72,12 +72,12 @@ public:
         if (Unit* target = ObjectAccessor::GetUnit(*player, targetGuid);
             target && target->IsAlive())
         {
-            DealEffectDamage(player, target, damage, schoolMask, SPELL_OVERKILL_DAMAGE);
+            CastEffectDamage(player, target, damage, schoolMask, SPELL_OVERKILL_DAMAGE);
         }
     }
 
-    void OnModifyDealtDamage(Player* /*player*/, Runtime& runtime, Unit* victim,
-        uint32& /*damage*/, SpellInfo const* /*spellInfo*/, DamageKind kind) override
+    void OnBeforeDealtDamage(Player* /*player*/, Runtime& runtime, Unit* victim,
+        uint32 /*damage*/, SpellInfo const* /*spellInfo*/, DamageKind kind) override
     {
         if (kind == DamageKind::Periodic || !runtime.overkillBank
             || !runtime.overkillExpiresMs || Now() >= runtime.overkillExpiresMs

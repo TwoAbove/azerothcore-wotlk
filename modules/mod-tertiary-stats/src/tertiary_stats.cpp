@@ -1987,6 +1987,8 @@ public:
         PLAYERHOOK_ON_LEVEL_CHANGED,
         PLAYERHOOK_ON_UPDATE,
         PLAYERHOOK_ON_SPELL_CAST,
+        PLAYERHOOK_ON_PLAYER_ENTER_COMBAT,
+        PLAYERHOOK_ON_PLAYER_LEAVE_COMBAT,
         PLAYERHOOK_ON_EQUIP,
         PLAYERHOOK_ON_UNEQUIP_ITEM,
         PLAYERHOOK_ON_ENVIRONMENTAL_DAMAGE,
@@ -2118,7 +2120,6 @@ public:
         if (spell->IsTriggered())
             return;
 
-        Fabled::HandleSpellCast(player, spell);
         if (player->HasAura(SPELL_TEMPO_COOLDOWN) && IsTempoCooldownEligible(spell))
         {
             Aura* charge = player->GetAura(SPELL_TEMPO_COOLDOWN);
@@ -2177,6 +2178,17 @@ public:
             && Fabled::HandleCanUseGameObjectWhileMounted(player, gameObject);
     }
 
+    void OnPlayerEnterCombat(Player* player, Unit* /*enemy*/) override
+    {
+        if (_settings.enabled && _dbcReady)
+            Fabled::HandleCombatEnter(player);
+    }
+
+    void OnPlayerLeaveCombat(Player* player) override
+    {
+        if (_settings.enabled && _dbcReady)
+            Fabled::HandleCombatExit(player);
+    }
 
     void OnPlayerEnvironmentalDamage(Player* player, EnviromentalDamage type, uint32& damage) override
     {
@@ -2202,8 +2214,8 @@ class TertiaryStatsUnit : public UnitScript
 {
 public:
     TertiaryStatsUnit() : UnitScript("TertiaryStatsUnit", true,
-        { UNITHOOK_ON_HEAL_FINAL, UNITHOOK_MODIFY_DAMAGE_FINAL, UNITHOOK_ON_DAMAGE_FINAL,
-          UNITHOOK_MODIFY_AURA_EFFECT_MASK, UNITHOOK_ON_AURA_APPLY,
+        { UNITHOOK_ON_HEAL_FINAL, UNITHOOK_ON_DAMAGE_FINAL,
+          UNITHOOK_MODIFY_SPELL_EFFECT_IMMUNITY_MASK, UNITHOOK_ON_AURA_APPLY,
           UNITHOOK_ON_AURA_REMOVE, UNITHOOK_ON_UNIT_DEATH }) { }
 
     void OnHealFinal(HealInfo const& healInfo) override
@@ -2219,42 +2231,6 @@ public:
             !IsTertiaryOutput(healInfo.GetSpellInfo()));
     }
 
-    void ModifyDamageFinal(Unit* attacker, Unit* victim, uint32& damage,
-        DamageEffectType damageType, SpellInfo const* spellInfo, Spell const*) override
-    {
-        if (!_settings.enabled || !_dbcReady || !attacker || !victim || !damage
-            || IsTertiaryOutput(spellInfo))
-            return;
-        Fabled::DamageKind kind = damageType == DOT
-            ? Fabled::DamageKind::Periodic
-            : (spellInfo ? Fabled::DamageKind::Spell : Fabled::DamageKind::Melee);
-        Player* owner = attacker->GetCharmerOrOwnerPlayerOrPlayerItself();
-        TertiaryState* ownerState = owner ? FindState(owner) : nullptr;
-        bool tertiaryOutput = ownerState && EnsureState(owner)->processing;
-        if (owner && owner != victim && !owner->IsFriendlyTo(victim) && !tertiaryOutput)
-            Fabled::HandleModifyDealtDamage(owner, victim, damage, spellInfo, kind);
-
-        Player* player = victim->ToPlayer();
-        if (!player)
-            return;
-
-        Fabled::HandleIncomingDamage(player, attacker, damage);
-        if (damage >= player->GetHealth())
-            return;
-
-        TertiaryState* state = FindState(player);
-        if (!state)
-            return;
-        state = EnsureState(player);
-        if (Points(*state, Power::Unbroken) <= 0.0f || player->HasSpellCooldown(SPELL_UNBROKEN))
-            return;
-
-        float oldHealthPct = player->GetHealthPct();
-        float newHealthPct = 100.0f * float(player->GetHealth() - damage) / float(player->GetMaxHealth());
-        if (oldHealthPct >= _settings.unbrokenThreshold && newHealthPct < _settings.unbrokenThreshold)
-            state->pendingUnbroken = true;
-    }
-
     void OnDamageFinal(Unit* attacker, Unit* victim, uint32 damage,
         DamageEffectType damageType, SpellInfo const* spellInfo, Spell const*) override
     {
@@ -2263,20 +2239,42 @@ public:
 
         Player* owner = attacker->GetCharmerOrOwnerPlayerOrPlayerItself();
         TertiaryState* ownerState = owner ? FindState(owner) : nullptr;
+        bool tertiaryOutput = IsTertiaryOutput(spellInfo);
+        Fabled::DamageKind kind = damageType == DOT
+            ? Fabled::DamageKind::Periodic
+            : (spellInfo ? Fabled::DamageKind::Spell : Fabled::DamageKind::Melee);
+
+        if (!tertiaryOutput)
+        {
+            bool processingTertiaryOutput = ownerState && EnsureState(owner)->processing;
+            if (owner && owner != victim && !owner->IsFriendlyTo(victim) && !processingTertiaryOutput)
+                Fabled::HandleBeforeDealtDamage(owner, victim, damage, spellInfo, kind);
+
+            Player* player = victim->ToPlayer();
+            if (player && damage < player->GetHealth())
+            {
+                if (TertiaryState* state = FindState(player))
+                {
+                    state = EnsureState(player);
+                    if (Points(*state, Power::Unbroken) > 0.0f && !player->HasSpellCooldown(SPELL_UNBROKEN))
+                    {
+                        float oldHealthPct = player->GetHealthPct();
+                        float newHealthPct = 100.0f * float(player->GetHealth() - damage) / float(player->GetMaxHealth());
+                        if (oldHealthPct >= _settings.unbrokenThreshold && newHealthPct < _settings.unbrokenThreshold)
+                            state->pendingUnbroken = true;
+                    }
+                }
+            }
+        }
+
         if (!owner || owner == victim || owner->IsFriendlyTo(victim))
             return;
 
-        bool tertiaryOutput = IsTertiaryOutput(spellInfo);
         uint32 effectiveDamage = std::min(damage, victim->GetHealth());
         if (ownerState)
             HandleAction(owner, victim, effectiveDamage, false, !tertiaryOutput);
         if (!tertiaryOutput)
-        {
-            Fabled::DamageKind kind = damageType == DOT
-                ? Fabled::DamageKind::Periodic
-                : (spellInfo ? Fabled::DamageKind::Spell : Fabled::DamageKind::Melee);
             Fabled::HandleDealtDamageFinal(owner, victim, damage, spellInfo, kind);
-        }
     }
 
     void OnUnitDeath(Unit* victim, Unit* killer) override
@@ -2289,11 +2287,14 @@ public:
             Fabled::HandleKill(owner, victim);
     }
 
-    void ModifyAuraEffectMask(Unit* unit, Aura* aura, uint8& effectMask) override
+    void ModifySpellEffectImmunityMask(Unit* target, Unit* caster,
+        SpellInfo const* spellInfo, uint8 candidateEffectMask,
+        uint8& immuneEffectMask) override
     {
-        Player* player = unit ? unit->ToPlayer() : nullptr;
-        if (_settings.enabled && _dbcReady && player && aura)
-            Fabled::HandleModifyAuraEffectMask(player, aura, effectMask);
+        Player* player = target ? target->ToPlayer() : nullptr;
+        if (_settings.enabled && _dbcReady && player)
+            Fabled::HandleModifySpellEffectImmunityMask(player, caster, spellInfo,
+                candidateEffectMask, immuneEffectMask);
     }
 
     void OnAuraApply(Unit* unit, Aura* aura) override
@@ -2336,7 +2337,7 @@ class TertiaryStatsSpell : public AllSpellScript
 public:
     TertiaryStatsSpell() : AllSpellScript("TertiaryStatsSpell",
         { ALLSPELLHOOK_ON_CALC_CRIT_CHANCE, ALLSPELLHOOK_ON_CALC_PERIODIC_CRIT_CHANCE,
-          ALLSPELLHOOK_ON_CAST, ALLSPELLHOOK_ON_CAST_CANCEL,
+          ALLSPELLHOOK_ON_CAST, ALLSPELLHOOK_ON_CAST_CANCEL, ALLSPELLHOOK_ON_PREPARE,
           ALLSPELLHOOK_MODIFY_AURA_EFFECT_PERIODIC_TIME_RATE, ALLSPELLHOOK_ON_AURA_REMOVE,
           ALLSPELLHOOK_CAN_CAST_WHILE_MOVING, ALLSPELLHOOK_CAN_CAST_WHILE_MOUNTED }) { }
 
@@ -2423,12 +2424,20 @@ public:
             critChance = 100.0f;
     }
 
+    void OnSpellPrepare(Spell* spell, Unit* caster, SpellInfo const* /*spellInfo*/) override
+    {
+        Player* player = caster ? caster->ToPlayer() : nullptr;
+        if (_settings.enabled && _dbcReady && player && spell)
+            Fabled::HandleSpellPrepare(player, spell);
+    }
+
     void OnSpellCast(Spell* spell, Unit* caster, SpellInfo const* spellInfo, bool /*skipCheck*/) override
     {
         Player* player = caster ? caster->ToPlayer() : nullptr;
         if (!_settings.enabled || !_dbcReady || !player || !spell || !spellInfo)
             return;
 
+        Fabled::HandleSpellCastComplete(player, spell);
         TertiaryState* state = FindState(player);
         if (!state)
             return;
@@ -2459,8 +2468,6 @@ public:
 
         if (TertiaryState* state = FindState(player))
             RearmFailedCast(player, *state, spell);
-        if (_settings.enabled && _dbcReady)
-            Fabled::HandleSpellCastCancel(player, spell);
     }
 
     bool CanCastWhileMoving(Spell const* spell) override
@@ -3761,6 +3768,8 @@ void AddSC_tertiary_stats()
         "fabled-indomitable"
     });
     RegisterSpellScript(spell_tertiary_unbroken_daze);
+    Fabled::RegisterVengefulGhostSpellScripts();
+    Fabled::RegisterBloodMagicSpellScripts();
     new TertiaryStatsWorld();
     new TertiaryStatsItem();
     new TertiaryStatsPlayer();

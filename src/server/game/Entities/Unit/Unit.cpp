@@ -1194,9 +1194,7 @@ uint32 Unit::DealDamage(Unit* attacker, Unit* victim, uint32 damage, CleanDamage
     DamageEffectType finalDamageType = reportedDamageType != NODAMAGE ? reportedDamageType : damagetype;
     if (damage && finalDamageType != NODAMAGE)
     {
-        sScriptMgr->ModifyDamageFinal(attacker, victim, damage, finalDamageType, spellProto, damageSpell);
-        if (damage)
-            sScriptMgr->OnDamageFinal(attacker, victim, damage, finalDamageType, spellProto, damageSpell);
+        sScriptMgr->OnDamageFinal(attacker, victim, damage, finalDamageType, spellProto, damageSpell);
     }
 
     if (attacker && attacker != victim)
@@ -4764,12 +4762,6 @@ AuraApplication* Unit::_CreateAuraApplication(Aura* aura, uint8 effMask)
         return nullptr;
 
     Unit* caster = aura->GetCaster();
-
-    uint8 const originalEffectMask = effMask;
-    sScriptMgr->ModifyAuraEffectMask(this, aura, effMask);
-    effMask &= originalEffectMask;
-    if (!effMask)
-        return nullptr;
 
     AuraApplication* aurApp = new AuraApplication(this, caster, aura, effMask);
     m_appliedAuras.insert(AuraApplicationMap::value_type(aurId, aurApp));

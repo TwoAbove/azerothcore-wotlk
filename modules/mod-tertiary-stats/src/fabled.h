@@ -120,9 +120,10 @@ constexpr uint32 SPELL_IMPACT_DAMAGE = 82018;
 constexpr uint32 SPELL_CROSSFIRE_DAMAGE = 82019;
 constexpr uint32 SPELL_VENGEFUL_COOLDOWN = 82020;
 constexpr uint32 SPELL_OVERKILL_DAMAGE = 82022;
+constexpr uint32 SPELL_VENGEFUL_GUARD = 82023;
 constexpr uint32 SPELL_VISUAL_KIT_INDOMITABLE = 270;
 constexpr uint32 SPELL_FIRST = SPELL_PREMONITION_AURA;
-constexpr uint32 SPELL_LAST = SPELL_VENGEFUL_COOLDOWN;
+constexpr uint32 SPELL_LAST = SPELL_VENGEFUL_GUARD;
 
 struct Settings
 {
@@ -179,7 +180,6 @@ struct KeeperAuraState
 struct Runtime : public DataMap::Base
 {
     uint16 mask = 0;                         // EffectBit() of equipped effects
-    bool wasInCombat = false;
     bool indomitableReady = false;
 
     uint64 ghostwalkFadeAtMs = 0;            // 0 = not armed
@@ -199,8 +199,6 @@ struct Runtime : public DataMap::Base
     ObjectGuid overkillPendingTarget;
     uint64 overkillPendingDamage = 0;
     SpellSchoolMask overkillPendingSchoolMask = SPELL_SCHOOL_MASK_NONE;
-    uint32 bloodDebtTickAccumulator = 0;
-    uint32 bloodDebtTicksRemaining = 0;
 
     // Test support: pull every pending deadline closer by ms. A deadline that
     // would land in the past becomes 1 (elapsed); zero stays zero (inactive).
@@ -226,9 +224,6 @@ public:
     // Equipment/settings refresh. active = the effect is currently equipped.
     // Must be idempotent; apply or remove persistent auras here.
     virtual void OnRefresh(Player* /*player*/, Runtime& /*runtime*/, bool /*active*/) { }
-    // Called before an aura is initially applied. Scripts may remove effects.
-    virtual void OnModifyAuraEffectMask(Player* /*player*/, Runtime& /*runtime*/,
-        Aura const* /*aura*/, uint8& /*effectMask*/) { }
     // Application lifetime hooks; remove is delivered before the Aura is destroyed.
     virtual void OnAuraApply(Player* /*player*/, Runtime& /*runtime*/, Aura* /*aura*/) { }
     virtual void OnAuraRemove(Player* /*player*/, Runtime& /*runtime*/, Aura* /*aura*/) { }
@@ -239,23 +234,24 @@ public:
     // Killing blows attributed to the player (direct, pet, or PvP).
     virtual void OnKill(Player* /*player*/, Runtime& /*runtime*/, Unit* /*victim*/, bool /*xpEligible*/) { }
 
-    // Pre-application damage the player deals; modifiable.
-    virtual void OnModifyDealtDamage(Player* /*player*/, Runtime& /*runtime*/, Unit* /*victim*/,
-        uint32& /*damage*/, SpellInfo const* /*spellInfo*/, DamageKind /*kind*/) { }
+    // Resolved damage about to be applied to the victim.
+    virtual void OnBeforeDealtDamage(Player* /*player*/, Runtime& /*runtime*/, Unit* /*victim*/,
+        uint32 /*damage*/, SpellInfo const* /*spellInfo*/, DamageKind /*kind*/) { }
 
     // Resolved damage the player deals, after all modifiers and mitigation.
     virtual void OnDealtDamageFinal(Player* /*player*/, Runtime& /*runtime*/, Unit* /*victim*/,
         uint32 /*damage*/, SpellInfo const* /*spellInfo*/, DamageKind /*kind*/) { }
 
-    // Damage the player is about to take; modifiable (cheat-death lives here).
-    virtual void OnIncomingDamage(Player* /*player*/, Runtime& /*runtime*/, Unit* /*attacker*/, uint32& /*damage*/) { }
+    virtual void ModifySpellEffectImmunityMask(Player* /*player*/, Runtime& /*runtime*/,
+        Unit* /*caster*/, SpellInfo const* /*spellInfo*/, uint8 /*candidateEffectMask*/,
+        uint8& /*immuneEffectMask*/) { }
 
     // Environmental damage (fall etc.); runs after Avoidance mitigation.
     virtual void OnEnvironmentalDamage(Player* /*player*/, Runtime& /*runtime*/, EnviromentalDamage /*type*/, uint32& /*damage*/) { }
 
     // Non-triggered spell lifecycle for the player's own casts.
-    virtual void OnSpellCast(Player* /*player*/, Runtime& /*runtime*/, Spell* /*spell*/) { }
-    virtual void OnSpellCastCancel(Player* /*player*/, Runtime& /*runtime*/, Spell* /*spell*/) { }
+    virtual void OnSpellPrepare(Player* /*player*/, Runtime& /*runtime*/, Spell* /*spell*/) { }
+    virtual void OnSpellCastComplete(Player* /*player*/, Runtime& /*runtime*/, Spell* /*spell*/) { }
 
     // Core restriction exemptions (see AllSpellScript::CanCastWhileMoving/Mounted).
     virtual bool CanCastWhileMoving(Player* /*player*/, Runtime& /*runtime*/, Spell const* /*spell*/) { return false; }
@@ -291,6 +287,8 @@ std::unique_ptr<Script> MakeOverkill();
 std::unique_ptr<Script> MakeBloodMagic();
 std::unique_ptr<Script> MakeWarcaster();
 std::unique_ptr<Script> MakeIndomitable();
+void RegisterVengefulGhostSpellScripts();
+void RegisterBloodMagicSpellScripts();
 
 // Dispatcher API used by tertiary_stats.cpp.
 void LoadSettings();
@@ -298,23 +296,25 @@ bool ValidateSpells();                       // startup DBC check; latches readi
 Runtime* FindRuntime(Player* player);
 bool IsReady();
 uint64 Now();                                // GameTime in ms
-void DealEffectDamage(Player* attacker, Unit* victim, uint64 amount,
+void CastEffectDamage(Player* attacker, Unit* victim, uint64 amount,
     SpellSchoolMask schoolMask, uint32 outputSpellId);
 Runtime& GetRuntime(Player* player);
 void SetMask(Player* player, uint16 mask);   // from equipment refresh
 void HandleUpdate(Player* player, uint32 diffMs);
 void HandleKill(Player* killer, Unit* victim);
-void HandleModifyDealtDamage(Player* attacker, Unit* victim, uint32& damage,
+void HandleBeforeDealtDamage(Player* attacker, Unit* victim, uint32 damage,
     SpellInfo const* spellInfo, DamageKind kind);
 void HandleDealtDamageFinal(Player* attacker, Unit* victim, uint32 damage,
     SpellInfo const* spellInfo, DamageKind kind);
-void HandleIncomingDamage(Player* victim, Unit* attacker, uint32& damage);
-void HandleModifyAuraEffectMask(Player* player, Aura const* aura, uint8& effectMask);
+void HandleModifySpellEffectImmunityMask(Player* target, Unit* caster,
+    SpellInfo const* spellInfo, uint8 candidateEffectMask, uint8& immuneEffectMask);
 void HandleAuraApply(Player* player, Aura* aura);
 void HandleAuraRemove(Player* player, Aura* aura);
 void HandleEnvironmentalDamage(Player* player, EnviromentalDamage type, uint32& damage);
-void HandleSpellCast(Player* caster, Spell* spell);
-void HandleSpellCastCancel(Player* caster, Spell* spell);
+void HandleSpellPrepare(Player* caster, Spell* spell);
+void HandleSpellCastComplete(Player* caster, Spell* spell);
+void HandleCombatEnter(Player* player);
+void HandleCombatExit(Player* player);
 bool HandleCanCastWhileMoving(Spell const* spell);
 bool HandleCanCastWhileMounted(Spell const* spell);
 bool HandleCanAttackWhileMounted(Player* player, Unit* victim, bool meleeAttack);

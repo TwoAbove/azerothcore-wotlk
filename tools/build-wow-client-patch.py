@@ -247,8 +247,9 @@ def custom_spells(settings):
         spell_row(82016, "Leviathan's Gift", 545, (6, 6), (82, 58), (1, 1), 21,
                   cannot_cancel,
                   aura_tooltip="You can breathe underwater and swim $s2% faster."),
-        spell_row(82017, "Blood Debt", 1109, (6,), (226,), (1,), 0,
-                  aura_is_debuff | cannot_cancel, amplitudes=(1000,), school=32,
+        spell_row(82017, "Blood Debt", 1109, (6, 6), (4, 3), (1, 1), 0,
+                  aura_is_debuff | cannot_cancel, amplitudes=(0, 1000),
+                  attributes_ex3=suppress_damage_procs, school=32,
                   aura_tooltip="$s1 damage remains and is dealt over the debuff's duration."),
         spell_row(82018, "Impact", 4501, (2,), (), (6,),
                   attributes_ex2=cannot_crit | ignore_line_of_sight,
@@ -267,6 +268,8 @@ def custom_spells(settings):
                   attributes_ex2=cannot_crit | ignore_line_of_sight,
                   attributes_ex3=suppress_damage_procs,
                   school=1, damage_class=1, visual=0, range_index=1),
+        spell_row(82023, "Vengeful Ghost", 1654, (6,), (69,), (1,), 21,
+                  hidden_passive, misc_values=(127,)),
     ]
 
 

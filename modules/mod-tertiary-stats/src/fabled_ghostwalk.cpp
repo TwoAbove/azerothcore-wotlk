@@ -89,13 +89,13 @@ public:
         ApplyFade(player);
     }
 
-    void OnModifyDealtDamage(Player* player, Runtime& runtime, Unit* /*victim*/,
-        uint32& /*damage*/, SpellInfo const* /*spellInfo*/, DamageKind /*kind*/) override
+    void OnBeforeDealtDamage(Player* player, Runtime& runtime, Unit* /*victim*/,
+        uint32 /*damage*/, SpellInfo const* /*spellInfo*/, DamageKind /*kind*/) override
     {
         BreakFade(player, runtime);
     }
 
-    void OnSpellCast(Player* player, Runtime& runtime, Spell* spell) override
+    void OnSpellPrepare(Player* player, Runtime& runtime, Spell* spell) override
     {
         if (spell)
             BreakFade(player, runtime);
@@ -219,7 +219,7 @@ public:
         if (positiveInfo)
         {
             Spell positiveSpell(actor, positiveInfo, TRIGGERED_NONE);
-            HandleSpellCast(actor, &positiveSpell);
+            HandleSpellPrepare(actor, &positiveSpell);
             context.Expect(!actor->HasAura(SPELL_GHOSTWALK_AURA),
                 "a positive player cast breaks Ghostwalk");
             ApplyFade(actor);

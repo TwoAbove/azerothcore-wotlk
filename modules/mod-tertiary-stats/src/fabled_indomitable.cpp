@@ -62,6 +62,11 @@ bool IsHardControlAura(SpellInfo const* spellInfo, uint8 effectMask)
     return false;
 }
 
+void SetReady(Runtime& runtime, bool ready)
+{
+    runtime.indomitableReady = ready;
+}
+
 class IndomitableScript final : public Script
 {
 public:
@@ -70,32 +75,40 @@ public:
     void OnRefresh(Player* player, Runtime& runtime, bool active) override
     {
         if (!active)
-            runtime.indomitableReady = false;
+            SetReady(runtime, false);
         else if (!player->IsInCombat())
-            runtime.indomitableReady = true;
+            SetReady(runtime, true);
     }
 
-    void OnModifyAuraEffectMask(Player* player, Runtime& runtime, Aura const* aura,
-        uint8& effectMask) override
+    void ModifySpellEffectImmunityMask(Player* player, Runtime& runtime,
+        Unit* caster, SpellInfo const* spellInfo, uint8 candidateEffectMask,
+        uint8& immuneEffectMask) override
     {
-        if (!runtime.indomitableReady)
+        if (!runtime.indomitableReady || !caster || caster == player
+            || player->IsFriendlyTo(caster)
+            || spellInfo->HasAttribute(SPELL_ATTR0_NO_IMMUNITIES))
             return;
 
-        Unit* caster = aura->GetCaster();
-        SpellInfo const* spellInfo = aura->GetSpellInfo();
-        if (!caster || caster == player || player->IsFriendlyTo(caster)
-            || spellInfo->HasAttribute(SPELL_ATTR0_NO_IMMUNITIES)
-            || !IsHardControlAura(spellInfo, effectMask))
+        uint8 addedMask = 0;
+        for (uint8 index = 0; index < MAX_SPELL_EFFECTS; ++index)
+        {
+            uint8 effectBit = 1u << index;
+            if ((candidateEffectMask & effectBit)
+                && IsHardControlAura(spellInfo, effectBit)
+                && !player->IsImmunedToSpellEffect(spellInfo, index, caster))
+                addedMask |= effectBit;
+        }
+        if (!addedMask)
             return;
 
-        runtime.indomitableReady = false;
-        effectMask = 0;
+        immuneEffectMask |= addedMask;
+        SetReady(runtime, false);
         player->SendPlaySpellVisual(SPELL_VISUAL_KIT_INDOMITABLE);
     }
 
     void OnCombatExit(Player* /*player*/, Runtime& runtime) override
     {
-        runtime.indomitableReady = true;
+        SetReady(runtime, true);
     }
 };
 
@@ -119,6 +132,12 @@ public:
         _equipped = Test::EquipFabledTrinket(actor, Effect::Indomitable) != nullptr;
         context.Expect(_equipped && GetRuntime(actor).indomitableReady,
             "Indomitable readies when equipped outside combat");
+
+        actor->CastSpell(actor, TEST_STUN_SPELL, true);
+        context.Expect(actor->HasAura(TEST_STUN_SPELL)
+                && GetRuntime(actor).indomitableReady,
+            "friendly control does not block or consume the charge");
+        actor->RemoveAurasDueToSpell(TEST_STUN_SPELL);
 
         Creature* dummy = context.SpawnDummy(3.0f, 0.0f);
         context.Expect(dummy && context.Engage(dummy->GetGUID()),

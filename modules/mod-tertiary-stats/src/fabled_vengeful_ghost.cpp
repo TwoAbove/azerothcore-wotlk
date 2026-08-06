@@ -5,9 +5,11 @@
 #include "fabled_test_utils.h"
 
 #include "Creature.h"
+#include "ScriptMgr.h"
 #include "SpellAuras.h"
 #include "SpellDefines.h"
 #include "SpellMgr.h"
+#include "SpellScript.h"
 
 #include <algorithm>
 #include <limits>
@@ -46,6 +48,68 @@ void StartLockout(Player* player)
         GetSettings().vengefulLockoutMs, false);
 }
 
+void DealNativeTestDamage(Creature* attacker, Player* victim)
+{
+    CustomSpellValues values;
+    values.AddSpellMod(SPELLVALUE_BASE_POINT0, int32(std::min<uint64>(
+        uint64(victim->GetHealth()) * 10, uint64(std::numeric_limits<int32>::max()))));
+    values.AddSpellMod(SPELLVALUE_SCHOOL_MASK, SPELL_SCHOOL_MASK_SHADOW);
+    attacker->CastCustomSpell(SPELL_IMPACT_DAMAGE, values, victim,
+        TriggerCastFlags(TRIGGERED_FULL_MASK | TRIGGERED_DISALLOW_PROC_EVENTS));
+}
+
+class spell_fabled_vengeful_guard final : public AuraScript
+{
+    PrepareAuraScript(spell_fabled_vengeful_guard);
+
+    void CalculateAmount(AuraEffect const* /*effect*/, int32& amount,
+        bool& /*canBeRecalculated*/)
+    {
+        amount = -1;
+    }
+
+    void Absorb(AuraEffect* /*effect*/, DamageInfo& damageInfo, uint32& absorbAmount)
+    {
+        Player* player = GetTarget()->ToPlayer();
+        Runtime* runtime = player ? FindRuntime(player) : nullptr;
+        if (!player || !runtime || !Has(*runtime, Effect::VengefulGhost)
+            || !player->IsAlive() || damageInfo.GetDamage() < player->GetHealth())
+            return;
+
+        Unit* attacker = damageInfo.GetAttacker();
+        if (attacker)
+        {
+            if (player->duel
+                && (player->duel->Opponent == attacker
+                    || player->duel->Opponent->GetGUID() == attacker->GetCharmerGUID()))
+                return;
+        }
+
+        if (!runtime->vengefulPhaseActive
+            && player->HasSpellCooldown(SPELL_VENGEFUL_COOLDOWN))
+            return;
+
+        uint32 allowedDamage = player->GetHealth() > 1 ? player->GetHealth() - 1 : 0;
+        absorbAmount = damageInfo.GetDamage() - allowedDamage;
+        if (runtime->vengefulPhaseActive)
+            return;
+
+        runtime->vengefulPhaseActive = true;
+        runtime->vengefulPhaseEndMs = Now() + GetSettings().vengefulPhaseMs;
+        StartLockout(player);
+        ApplyPhase(player, GetSettings().vengefulPhaseMs);
+    }
+
+    void Register() override
+    {
+        DoEffectCalcAmount += AuraEffectCalcAmountFn(
+            spell_fabled_vengeful_guard::CalculateAmount, EFFECT_0,
+            SPELL_AURA_SCHOOL_ABSORB);
+        OnEffectAbsorb += AuraEffectAbsorbFn(spell_fabled_vengeful_guard::Absorb,
+            EFFECT_0);
+    }
+};
+
 class VengefulGhostScript final : public Script
 {
 public:
@@ -55,6 +119,13 @@ public:
     {
         if (active)
         {
+            if (!player->HasAura(SPELL_VENGEFUL_GUARD))
+                player->CastSpell(player, SPELL_VENGEFUL_GUARD, true);
+            if (Aura* guard = player->GetAura(SPELL_VENGEFUL_GUARD))
+            {
+                guard->SetMaxDuration(-1);
+                guard->SetDuration(-1);
+            }
             if (!runtime.vengefulPhaseActive && player->IsAlive())
             {
                 if (Aura* aura = player->GetAura(SPELL_VENGEFUL_PHASE))
@@ -67,6 +138,7 @@ public:
             return;
         }
 
+        player->RemoveAurasDueToSpell(SPELL_VENGEFUL_GUARD);
         bool phaseActive = runtime.vengefulPhaseActive;
         RemovePhase(player, runtime);
         if (phaseActive && player->IsAlive())
@@ -98,31 +170,6 @@ public:
                 source ? source->GetSchoolMask() : SPELL_SCHOOL_MASK_NORMAL);
             Unit::DealHeal(healInfo);
         }
-    }
-
-    void OnIncomingDamage(Player* player, Runtime& runtime, Unit* /*attacker*/, uint32& damage) override
-    {
-        if (!player->IsAlive())
-            return;
-
-        uint32 health = player->GetHealth();
-        if (damage < health)
-            return;
-
-        if (runtime.vengefulPhaseActive)
-        {
-            damage = health > 1 ? health - 1 : 0;
-            return;
-        }
-
-        if (player->HasSpellCooldown(SPELL_VENGEFUL_COOLDOWN))
-            return;
-
-        damage = health > 1 ? health - 1 : 0;
-        runtime.vengefulPhaseActive = true;
-        runtime.vengefulPhaseEndMs = Now() + GetSettings().vengefulPhaseMs;
-        StartLockout(player);
-        ApplyPhase(player, GetSettings().vengefulPhaseMs);
     }
 
     void OnDeath(Player* player, Runtime& runtime) override
@@ -171,6 +218,8 @@ public:
 
         _equipped = Test::EquipFabledTrinket(actor, Effect::VengefulGhost) != nullptr;
         context.Expect(_equipped, "Vengeful Ghost trinket equipped");
+        context.Expect(actor->HasAura(SPELL_VENGEFUL_GUARD),
+            "Vengeful Ghost equips its native absorb guard");
         if (!_equipped)
         {
             CleanupAndFinish(context);
@@ -189,8 +238,7 @@ public:
 
         uint32 firstLethalHealth = actor->GetHealth();
         context.ClearEvents();
-        Unit::DealDamage(firstDummy, actor, actor->GetHealth(), nullptr, NODAMAGE,
-            SPELL_SCHOOL_MASK_NORMAL, nullptr, false, true, nullptr, DIRECT_DAMAGE);
+        DealNativeTestDamage(firstDummy, actor);
         context.Expect(actor->IsAlive() && actor->GetHealth() == 1,
             "redirected lethal hit leaves the actor alive at one health",
             "health=" + std::to_string(actor->GetHealth()));
@@ -240,8 +288,7 @@ public:
         _secondDummyGuid = secondDummy->GetGUID();
         context.Expect(context.Engage(_secondDummyGuid), "second dummy engaged");
 
-        Unit::DealDamage(secondDummy, actor, actor->GetHealth(), nullptr, DIRECT_DAMAGE,
-            SPELL_SCHOOL_MASK_NORMAL, nullptr, false, true);
+        DealNativeTestDamage(secondDummy, actor);
         context.Expect(actor->IsAlive() && actor->GetHealth() == 1
                 && runtime.vengefulPhaseActive && actor->HasAura(SPELL_VENGEFUL_PHASE),
             "Vengeful phase retriggers after its lockout");
@@ -333,6 +380,11 @@ private:
     bool _equipped = false;
 };
 } // namespace
+
+void RegisterVengefulGhostSpellScripts()
+{
+    RegisterSpellScript(spell_fabled_vengeful_guard);
+}
 
 std::unique_ptr<Script> MakeVengefulGhost()
 {

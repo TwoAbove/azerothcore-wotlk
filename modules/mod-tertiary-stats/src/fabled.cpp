@@ -349,11 +349,8 @@ bool ValidateSpells()
     for (uint32 spellId = SPELL_FIRST; spellId <= SPELL_LAST; ++spellId)
         if (!sSpellMgr->GetSpellInfo(spellId))
             _ready = false;
-    if (!sSpellMgr->GetSpellInfo(SPELL_OVERKILL_DAMAGE))
-        _ready = false;
-
     if (!_ready)
-        LOG_ERROR("module", "TertiaryStats: fabled spell DBC rows (82011-82020, 82022) are missing; fabled effects are disabled");
+        LOG_ERROR("module", "TertiaryStats: fabled spell DBC rows (82011-82023) are missing; fabled effects are disabled");
 
     return _ready;
 }
@@ -367,24 +364,19 @@ uint64 Now()
 {
     return uint64(GameTime::GetGameTimeMS().count());
 }
-void DealEffectDamage(Player* attacker, Unit* victim, uint64 amount,
+void CastEffectDamage(Player* attacker, Unit* victim, uint64 amount,
     SpellSchoolMask schoolMask, uint32 outputSpellId)
 {
     if (!attacker || !victim || !victim->IsAlive() || !amount
-        || schoolMask == SPELL_SCHOOL_MASK_NONE || victim->IsImmunedToDamage(schoolMask))
+        || schoolMask == SPELL_SCHOOL_MASK_NONE)
         return;
 
-    SpellInfo const* outputSpell = sSpellMgr->GetSpellInfo(outputSpellId);
-    if (!outputSpell)
-        return;
-
-    uint32 damage = uint32(std::min<uint64>(amount, std::numeric_limits<uint32>::max()));
-    SpellNonMeleeDamage damageInfo(attacker, victim, outputSpell, schoolMask);
-    attacker->CalculateSpellDamageTaken(&damageInfo, int32(std::min<uint32>(
-        damage, uint32(std::numeric_limits<int32>::max()))), outputSpell);
-    Unit::DealDamageMods(victim, damageInfo.damage, &damageInfo.absorb);
-    attacker->SendSpellNonMeleeDamageLog(&damageInfo);
-    attacker->DealSpellDamage(&damageInfo, false);
+    CustomSpellValues values;
+    values.AddSpellMod(SPELLVALUE_BASE_POINT0, int32(std::min<uint64>(amount,
+        uint64(std::numeric_limits<int32>::max()))));
+    values.AddSpellMod(SPELLVALUE_SCHOOL_MASK, int32(schoolMask));
+    attacker->CastCustomSpell(outputSpellId, values, victim,
+        TriggerCastFlags(TRIGGERED_FULL_MASK | TRIGGERED_DISALLOW_PROC_EVENTS));
 }
 
 
@@ -422,16 +414,6 @@ void HandleUpdate(Player* player, uint32 diffMs)
     if (!runtime || !runtime->mask)
         return;
 
-    bool inCombat = player->IsInCombat();
-    if (inCombat != runtime->wasInCombat)
-    {
-        runtime->wasInCombat = inCombat;
-        if (inCombat)
-            ForEachActive(*runtime, [&](Script& script) { script.OnCombatEnter(player, *runtime); });
-        else
-            ForEachActive(*runtime, [&](Script& script) { script.OnCombatExit(player, *runtime); });
-    }
-
     uint64 nowMs = Now();
     ForEachActive(*runtime, [&](Script& script) { script.OnUpdate(player, *runtime, diffMs, nowMs); });
 }
@@ -449,7 +431,7 @@ void HandleKill(Player* killer, Unit* victim)
     ForEachActive(*runtime, [&](Script& script) { script.OnKill(killer, *runtime, victim, xpEligible); });
 }
 
-void HandleModifyDealtDamage(Player* attacker, Unit* victim, uint32& damage,
+void HandleBeforeDealtDamage(Player* attacker, Unit* victim, uint32 damage,
     SpellInfo const* spellInfo, DamageKind kind)
 {
     if (!_ready || !attacker || !victim)
@@ -457,7 +439,7 @@ void HandleModifyDealtDamage(Player* attacker, Unit* victim, uint32& damage,
 
     Runtime* runtime = FindRuntime(attacker);
     if (runtime && runtime->mask)
-        ForEachActive(*runtime, [&](Script& script) { script.OnModifyDealtDamage(attacker, *runtime, victim, damage, spellInfo, kind); });
+        ForEachActive(*runtime, [&](Script& script) { script.OnBeforeDealtDamage(attacker, *runtime, victim, damage, spellInfo, kind); });
 }
 
 void HandleDealtDamageFinal(Player* attacker, Unit* victim, uint32 damage,
@@ -474,26 +456,18 @@ void HandleDealtDamageFinal(Player* attacker, Unit* victim, uint32 damage,
         });
 }
 
-void HandleIncomingDamage(Player* victim, Unit* attacker, uint32& damage)
+void HandleModifySpellEffectImmunityMask(Player* target, Unit* caster,
+    SpellInfo const* spellInfo, uint8 candidateEffectMask, uint8& immuneEffectMask)
 {
-    if (!_ready || !victim)
+    if (!_ready || !target || !spellInfo || !candidateEffectMask)
         return;
 
-    Runtime* runtime = FindRuntime(victim);
-    if (runtime && runtime->mask)
-        ForEachActive(*runtime, [&](Script& script) { script.OnIncomingDamage(victim, *runtime, attacker, damage); });
-}
-
-void HandleModifyAuraEffectMask(Player* player, Aura const* aura, uint8& effectMask)
-{
-    if (!_ready || !player || !aura || !effectMask)
-        return;
-
-    Runtime* runtime = FindRuntime(player);
+    Runtime* runtime = FindRuntime(target);
     if (runtime && runtime->mask)
         ForEachActive(*runtime, [&](Script& script)
         {
-            script.OnModifyAuraEffectMask(player, *runtime, aura, effectMask);
+            script.ModifySpellEffectImmunityMask(target, *runtime, caster, spellInfo,
+                candidateEffectMask, immuneEffectMask);
         });
 }
 
@@ -527,25 +501,38 @@ void HandleEnvironmentalDamage(Player* player, EnviromentalDamage type, uint32& 
         ForEachActive(*runtime, [&](Script& script) { script.OnEnvironmentalDamage(player, *runtime, type, damage); });
 }
 
-
-void HandleSpellCast(Player* caster, Spell* spell)
+void HandleSpellPrepare(Player* caster, Spell* spell)
 {
     if (!_ready || !caster || !spell || spell->IsTriggered())
         return;
 
     Runtime* runtime = FindRuntime(caster);
     if (runtime && runtime->mask)
-        ForEachActive(*runtime, [&](Script& script) { script.OnSpellCast(caster, *runtime, spell); });
+        ForEachActive(*runtime, [&](Script& script) { script.OnSpellPrepare(caster, *runtime, spell); });
 }
 
-void HandleSpellCastCancel(Player* caster, Spell* spell)
+void HandleSpellCastComplete(Player* caster, Spell* spell)
 {
-    if (!_ready || !caster || !spell)
+    if (!_ready || !caster || !spell || spell->IsTriggered())
         return;
 
     Runtime* runtime = FindRuntime(caster);
     if (runtime && runtime->mask)
-        ForEachActive(*runtime, [&](Script& script) { script.OnSpellCastCancel(caster, *runtime, spell); });
+        ForEachActive(*runtime, [&](Script& script) { script.OnSpellCastComplete(caster, *runtime, spell); });
+}
+
+void HandleCombatEnter(Player* player)
+{
+    Runtime* runtime = _ready ? FindRuntime(player) : nullptr;
+    if (runtime && runtime->mask)
+        ForEachActive(*runtime, [&](Script& script) { script.OnCombatEnter(player, *runtime); });
+}
+
+void HandleCombatExit(Player* player)
+{
+    Runtime* runtime = _ready ? FindRuntime(player) : nullptr;
+    if (runtime && runtime->mask)
+        ForEachActive(*runtime, [&](Script& script) { script.OnCombatExit(player, *runtime); });
 }
 
 bool HandleCanCastWhileMoving(Spell const* spell)

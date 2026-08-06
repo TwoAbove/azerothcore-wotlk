@@ -76,7 +76,7 @@ public:
 
         SpellSchoolMask schoolMask = spellInfo
             ? spellInfo->GetSchoolMask() : SPELL_SCHOOL_MASK_NORMAL;
-        DealEffectDamage(player, previousTarget, echoDamage, schoolMask,
+        CastEffectDamage(player, previousTarget, echoDamage, schoolMask,
             SPELL_CROSSFIRE_DAMAGE);
     }
 };
