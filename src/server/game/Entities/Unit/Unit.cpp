@@ -10739,11 +10739,6 @@ void Unit::ClearInCombat()
             for (uint8 i = 0; i < MAX_RUNES; ++i)
                 player->SetGracePeriod(i, 0);
     }
-
-    if (Player* player = this->ToPlayer())
-    {
-        sScriptMgr->OnPlayerLeaveCombat(player);
-    }
 }
 
 void Unit::ClearInPetCombat()
