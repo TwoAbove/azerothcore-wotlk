@@ -27,6 +27,7 @@
 #include <ctime>
 #include <memory>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 class Creature;
@@ -147,6 +148,7 @@ struct Settings
     float ghostwalkSpeedPct = 40.0f;
 
     std::string keeperExtraSpells;           // csv of additional spell ids to keep
+    bool IsKeeperExtraSpell(uint32 spellId) const;
 
     uint32 vengefulPhaseMs = 10000;
     uint32 vengefulLockoutMs = 600000;
@@ -164,6 +166,10 @@ struct Settings
 
     float bloodMagicHealthPerMana = 4.0f;
     uint32 bloodMagicDebtDurationMs = 10000;
+
+private:
+    mutable std::string _keeperExtraSpellsCacheCsv;
+    mutable std::unordered_set<uint32> _keeperExtraSpellsCache;
 };
 
 Settings const& GetSettings();

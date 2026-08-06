@@ -2828,22 +2828,34 @@ public:
             "heirlooms remain explicitly eligible when ordinary quality eligibility ends at epic");
         delete generatedHeirloom;
 
-
-
         Settings deterministicRollSettings = _settings;
         deterministicRollSettings.rollChance = 100.0f;
         Fabled::Settings deterministicFabledSettings = Fabled::GetSettings();
         deterministicFabledSettings.chance = 100.0f;
-        BonusRng deterministicFabledRng(1, 16859);
-        uint16 deterministicFabledBonus = RollBonus(sObjectMgr->GetItemTemplate(16859),
-            deterministicFabledRng, deterministicRollSettings, deterministicFabledSettings);
-        context.Expect(Fabled::EffectFromBonusId(deterministicFabledBonus)
-                == Fabled::Effect::Impact,
+        deterministicFabledSettings.chanceMultipliers.fill(1.0f);
+        Item* deterministicFabledItem = nullptr;
+        {
+            ScopedItemRollSettings scopedFabledSettings(
+                deterministicRollSettings, deterministicFabledSettings);
+            deterministicFabledItem = Item::CreateItem(16859, 1, actor);
+        }
+        context.Expect(deterministicFabledItem
+                && Fabled::EffectFromBonusId(TertiaryBonusOf(deterministicFabledItem))
+                    == Fabled::Effect::Impact,
             "Fabled conversion chooses the effect assigned to the item's slot");
+        delete deterministicFabledItem;
 
-        Item* suffixItem = Item::CreateItem(TEST_SUFFIX_ITEM_ENTRY, 1, actor);
-        if (suffixItem)
-            suffixItem->SetBonusSeed(MakeItemBonusSeed(fixedFleetfoot));
+        Settings suffixRollSettings = _settings;
+        suffixRollSettings.rollChance = 100.0f;
+        suffixRollSettings.ordinaryChance = 100.0f;
+        Fabled::Settings suffixFabledSettings = Fabled::GetSettings();
+        suffixFabledSettings.chance = 0.0f;
+        Item* suffixItem = nullptr;
+        {
+            ScopedItemRollSettings scopedSuffixSettings(
+                suffixRollSettings, suffixFabledSettings);
+            suffixItem = Item::CreateItem(TEST_SUFFIX_ITEM_ENTRY, 1, actor);
+        }
         int32 suffixProperty = suffixItem ? suffixItem->GetItemRandomPropertyId() : 0;
         uint32 suffixSeed = suffixItem ? suffixItem->GetBonusSeed() : 0;
         context.Expect(suffixItem && suffixProperty < 0 && suffixItem->GetItemSuffixFactor()
@@ -2986,8 +2998,23 @@ public:
         _dummyGuid = dummy->GetGUID();
 
         constexpr uint32 TEST_ITEM = 14136; // Robe of Winter Night: unrestricted rare cloth.
+        constexpr uint8 ORDINARY_MASK =
+            PowerBit(Power::Avoidance) | PowerBit(Power::Fleetfoot) | PowerBit(Power::Siphon);
+        Settings ordinaryRollSettings = _settings;
+        ordinaryRollSettings.rollChance = 100.0f;
+        ordinaryRollSettings.ordinaryChance = 100.0f;
+        ordinaryRollSettings.weights.fill(0.0f);
+        ordinaryRollSettings.weights[PowerIndex(Power::Avoidance)] = 1.0f;
+        ordinaryRollSettings.weights[PowerIndex(Power::Fleetfoot)] = 1.0f;
+        ordinaryRollSettings.weights[PowerIndex(Power::Siphon)] = 1.0f;
+        Fabled::Settings ordinaryFabledSettings = Fabled::GetSettings();
+        ordinaryFabledSettings.chance = 0.0f;
         uint16 equipmentPosition = uint16(INVENTORY_SLOT_BAG_0) << 8 | EQUIPMENT_SLOT_CHEST;
-        _item = actor->EquipNewItem(equipmentPosition, TEST_ITEM, true);
+        {
+            ScopedItemRollSettings scopedOrdinarySettings(
+                ordinaryRollSettings, ordinaryFabledSettings);
+            _item = actor->EquipNewItem(equipmentPosition, TEST_ITEM, true);
+        }
         context.Expect(_item && _item->GetEntry() == TEST_ITEM, "eligible test item equipped");
         if (!_item || _item->GetEntry() != TEST_ITEM)
         {
@@ -3007,36 +3034,22 @@ public:
         _nativeProperty = _item->GetItemRandomPropertyId();
         _nativeSuffixFactor = _item->GetItemSuffixFactor();
 
-        constexpr uint8 ORDINARY_MASK =
-            PowerBit(Power::Avoidance) | PowerBit(Power::Fleetfoot) | PowerBit(Power::Siphon);
-        Settings ordinaryRollSettings = _settings;
-        ordinaryRollSettings.rollChance = 100.0f;
-        ordinaryRollSettings.ordinaryChance = 100.0f;
-        ordinaryRollSettings.weights.fill(0.0f);
-        ordinaryRollSettings.weights[PowerIndex(Power::Avoidance)] = 1.0f;
-        ordinaryRollSettings.weights[PowerIndex(Power::Fleetfoot)] = 1.0f;
-        ordinaryRollSettings.weights[PowerIndex(Power::Siphon)] = 1.0f;
-        Fabled::Settings ordinaryFabledSettings = Fabled::GetSettings();
-        ordinaryFabledSettings.chance = 0.0f;
-        BonusRng ordinaryRng(1, TEST_ITEM);
-        uint16 rolledBonusId = RollBonus(_item->GetTemplate(), ordinaryRng,
-            ordinaryRollSettings, ordinaryFabledSettings);
-        _item->SetBonusSeed(MakeItemBonusSeed(rolledBonusId));
-        BonusDefinition rolledDefinition;
-        bool definitionResolved = DecodeBonusId(rolledBonusId, rolledDefinition);
+        uint16 generatedBonusId = TertiaryBonusOf(_item);
+        BonusDefinition generatedDefinition;
+        bool definitionResolved = DecodeBonusId(generatedBonusId, generatedDefinition);
         context.Expect(IsEligibleEquipment(_item->GetTemplate()) && definitionResolved
-                && rolledDefinition.powerMask == ORDINARY_MASK
-                && rolledDefinition.pointsPerPower == _pointBudget,
+                && generatedDefinition.powerMask == ORDINARY_MASK
+                && generatedDefinition.pointsPerPower == _pointBudget,
             "generated item deterministically decodes its three-power bonus",
-            "bonusId=" + std::to_string(rolledBonusId));
-        context.Expect(TertiaryDefinitionWirePayload(rolledBonusId)
+            "bonusId=" + std::to_string(generatedBonusId));
+        context.Expect(TertiaryDefinitionWirePayload(generatedBonusId)
                 == Acore::StringFormat("O:{}:0:1:2", _pointBudget)
                 && TertiaryDefinitionWirePayload(Fabled::BonusId(Fabled::Effect::Warcaster))
                     == "F:13",
             "item definitions serialize as semantic ordinary and Fabled protocol records");
         uint32 bonusSeed = _item->GetBonusSeed();
         context.Expect((bonusSeed >> ITEM_BONUS_SEED_VERSION_SHIFT) == ITEM_BONUS_SEED_VERSION
-                && TertiaryBonusOf(_item) == rolledBonusId,
+                && TertiaryBonusOf(_item) == generatedBonusId,
             "item bonus seed reproduces the generated bonus");
         context.Expect(_item->GetItemRandomPropertyId() == _nativeProperty
                 && _item->GetItemSuffixFactor() == _nativeSuffixFactor,

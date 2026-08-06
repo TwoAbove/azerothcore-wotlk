@@ -115,10 +115,8 @@ void TrackAura(Player* player, Runtime& runtime, Aura* aura)
     if (!application)
         return;
 
-    std::unordered_set<uint32> const extraSpells =
-        ParseExtraSpells(GetSettings(player).keeperExtraSpells);
     uint32 spellId = aura->GetId();
-    bool extraSpell = extraSpells.find(spellId) != extraSpells.end();
+    bool extraSpell = GetSettings(player).IsKeeperExtraSpell(spellId);
     if (!extraSpell && !IsElixirOrFlask(spellId) && !IsWellFedOrScroll(application))
         return;
 
@@ -374,6 +372,17 @@ private:
     bool _equipped = false;
 };
 } // namespace
+
+bool Settings::IsKeeperExtraSpell(uint32 spellId) const
+{
+    if (_keeperExtraSpellsCacheCsv != keeperExtraSpells)
+    {
+        _keeperExtraSpellsCache = ParseExtraSpells(keeperExtraSpells);
+        _keeperExtraSpellsCacheCsv = keeperExtraSpells;
+    }
+
+    return _keeperExtraSpellsCache.contains(spellId);
+}
 
 std::unique_ptr<Script> MakeKeeper()
 {
