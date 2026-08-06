@@ -174,7 +174,6 @@ TertiaryStats.Fabled.Ghostwalk.SpeedPct = 40
 # Keeper: metadata-defined elixir, flask, Well Fed, and scroll timers pause
 # while equipped and resume when Keeper is unequipped or the player dies.
 # ExtraSpells is an explicit comma-separated override for custom server spells.
-TertiaryStats.Fabled.Keeper.ScanIntervalMs = 2000
 TertiaryStats.Fabled.Keeper.ExtraSpells = ""
 
 # Vengeful Ghost: the killing blow leaves you at 1 HP in a spirit phase;
