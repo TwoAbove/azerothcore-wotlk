@@ -138,10 +138,10 @@ void ScriptMgr::OnPlayerBeforeSendLoot(Player* player, ObjectGuid lootGuid, Loot
 }
 
 void ScriptMgr::OnPlayerAfterSendAuctionList(Player* player, uint8 listType,
-    std::vector<uint32> const& itemBonusSeeds)
+    AuctionListResultView items)
 {
     CALL_ENABLED_HOOKS(PlayerScript, PLAYERHOOK_ON_AFTER_SEND_AUCTION_LIST,
-        script->OnPlayerAfterSendAuctionList(player, listType, itemBonusSeeds));
+        script->OnPlayerAfterSendAuctionList(player, listType, items));
 }
 
 void ScriptMgr::OnPlayerGiveXP(Player* player, uint32& amount, Unit* victim, uint8 xpSource)

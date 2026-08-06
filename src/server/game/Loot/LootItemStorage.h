@@ -65,7 +65,7 @@ public:
 
     void RemoveStoredLootItem(ObjectGuid containerGUID, uint32 itemid, uint32 count, Loot* loot, uint32 itemIndex);
     void RemoveStoredLootMoney(ObjectGuid containerGUID, Loot* loot);
-    void RemoveStoredLoot(ObjectGuid containerGUID);
+    void RemoveStoredLoot(ObjectGuid containerGUID, CharacterDatabaseTransaction* trans = nullptr);
 
 private:
     LootItemContainer lootItemStore;

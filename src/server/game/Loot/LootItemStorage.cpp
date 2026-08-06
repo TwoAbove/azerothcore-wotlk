@@ -17,10 +17,24 @@
 
 #include "LootItemStorage.h"
 #include "DatabaseEnv.h"
+#include "Item.h"
 #include "ObjectMgr.h"
 #include "PreparedStatement.h"
 #include "QueryResult.h"
 #include "Timer.h"
+
+namespace
+{
+uint32 StoredLootEntropy(uint32 containerGuid, uint32 itemId, uint32 itemIndex)
+{
+    uint64 value = (uint64(containerGuid) << 32) ^ (uint64(itemId) << 8) ^ itemIndex;
+    value += 0x9E3779B97F4A7C15ULL;
+    value = (value ^ (value >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    value = (value ^ (value >> 27)) * 0x94D049BB133111EBULL;
+    value ^= value >> 31;
+    return uint32(value);
+}
+}
 
 LootItemStorage::LootItemStorage()
 {
@@ -51,16 +65,43 @@ void LootItemStorage::LoadStorageFromDB()
     }
 
     uint32 count = 0;
+    CharacterDatabaseTransaction backfillTransaction;
     do
     {
         Field* fields = result->Fetch();
+        uint32 containerGuid = fields[0].Get<uint32>();
+        uint32 itemId = fields[1].Get<uint32>();
+        uint32 itemIndex = fields[2].Get<uint32>();
+        uint32 bonusSeed = fields[6].Get<uint32>();
+        if (itemId && !bonusSeed)
+        {
+            bonusSeed = Item::GenerateItemBonusSeed(
+                itemId, StoredLootEntropy(containerGuid, itemId, itemIndex));
+            if (bonusSeed)
+            {
+                if (!backfillTransaction)
+                    backfillTransaction = CharacterDatabase.BeginTransaction();
+                CharacterDatabasePreparedStatement* update =
+                    CharacterDatabase.GetPreparedStatement(CHAR_UPD_ITEMCONTAINER_BONUS_SEED);
+                update->SetData(0, bonusSeed);
+                update->SetData(1, containerGuid);
+                update->SetData(2, itemId);
+                update->SetData(3, itemIndex);
+                backfillTransaction->Append(update);
+            }
+        }
 
-        StoredLootItemList& itemList = lootItemStore[ObjectGuid::Create<HighGuid::Item>(fields[0].Get<uint32>())];
-        itemList.emplace_back(fields[1].Get<uint32>(), fields[2].Get<uint32>(), fields[3].Get<uint32>(), fields[4].Get<int32>(), fields[5].Get<uint32>(), fields[6].Get<uint32>(), fields[7].Get<bool>(),
-            fields[8].Get<bool>(), fields[9].Get<bool>(), fields[10].Get<bool>(), fields[11].Get<bool>(), fields[12].Get<bool>(), fields[13].Get<uint32>());
+        StoredLootItemList& itemList = lootItemStore[ObjectGuid::Create<HighGuid::Item>(containerGuid)];
+        itemList.emplace_back(itemId, itemIndex, fields[3].Get<uint32>(), fields[4].Get<int32>(),
+            fields[5].Get<uint32>(), bonusSeed, fields[7].Get<bool>(), fields[8].Get<bool>(),
+            fields[9].Get<bool>(), fields[10].Get<bool>(), fields[11].Get<bool>(), fields[12].Get<bool>(),
+            fields[13].Get<uint32>());
 
         ++count;
     } while (result->NextRow());
+
+    if (backfillTransaction)
+        CharacterDatabase.DirectCommitTransaction(backfillTransaction);
 
     LOG_INFO("server.loading", ">> Loaded {} stored items in {} ms", count, GetMSTimeDiffToNow(oldMSTime));
     LOG_INFO("server.loading", " ");
@@ -278,15 +319,14 @@ void LootItemStorage::RemoveStoredLootMoney(ObjectGuid containerGUID, Loot* loot
         lootItemStore.erase(itr);
 }
 
-void LootItemStorage::RemoveStoredLoot(ObjectGuid containerGUID)
+void LootItemStorage::RemoveStoredLoot(ObjectGuid containerGUID, CharacterDatabaseTransaction* trans)
 {
     lootItemStore.erase(containerGUID);
 
-    CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
-
     CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_ITEMCONTAINER_CONTAINER);
     stmt->SetData(0, containerGUID.GetCounter());
-    trans->Append(stmt);
-
-    CharacterDatabase.CommitTransaction(trans);
+    if (trans)
+        (*trans)->Append(stmt);
+    else
+        CharacterDatabase.Execute(stmt);
 }

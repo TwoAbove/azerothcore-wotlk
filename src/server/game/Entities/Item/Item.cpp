@@ -739,6 +739,16 @@ void Item::UpdateItemSuffixFactor()
     SetUInt32Value(ITEM_FIELD_PROPERTY_SEED, suffixFactor);
 }
 
+void Item::SetBonusSeed(uint32 seed)
+{
+    if (m_bonusSeed == seed)
+        return;
+
+    m_bonusSeed = seed;
+    if (uState != ITEM_NEW && uState != ITEM_REMOVED)
+        SetState(ITEM_CHANGED, GetOwner());
+}
+
 void Item::SetState(ItemUpdateState state, Player* forplayer)
 {
     if (uState == ITEM_NEW && state == ITEM_REMOVED)
@@ -1124,7 +1134,7 @@ uint32 Item::GenerateItemBonusSeed(uint32 item, uint32 entropy)
     if (!itemTemplate)
         return ITEM_BONUS_SEED_UNSET;
 
-    uint32 bonusSeed = MakeItemBonusSeed(0);
+    uint32 bonusSeed = ITEM_BONUS_SEED_UNSET;
     sScriptMgr->OnItemBonusSeedGenerate(itemTemplate, entropy, bonusSeed);
     return bonusSeed;
 }

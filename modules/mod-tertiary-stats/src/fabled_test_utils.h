@@ -6,6 +6,7 @@
 #define MOD_TERTIARY_STATS_FABLED_TEST_UTILS_H
 
 #include "fabled.h"
+#include "item_bonus_seed.h"
 
 #include "Item.h"
 #include "Player.h"
