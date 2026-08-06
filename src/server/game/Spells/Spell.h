@@ -292,6 +292,8 @@ struct TriggeredByAuraSpellData
     SpellInfo const* spellInfo;
     int8 effectIndex;
     uint32 tickNumber;
+    ObjectGuid sourceOwnerGuid;
+    ObjectGuid sourceCasterGuid;
 };
 
 class Spell
@@ -608,6 +610,8 @@ public:
 
     [[nodiscard]] uint32 GetTriggeredByAuraTickNumber() const { return m_triggeredByAuraSpell.tickNumber; }
     [[nodiscard]] SpellInfo const* GetTriggeredByAuraSpellInfo() const { return m_triggeredByAuraSpell.spellInfo; }
+    [[nodiscard]] ObjectGuid GetTriggeredByAuraOwnerGUID() const { return m_triggeredByAuraSpell.sourceOwnerGuid; }
+    [[nodiscard]] ObjectGuid GetTriggeredByAuraCasterGUID() const { return m_triggeredByAuraSpell.sourceCasterGuid; }
     [[nodiscard]] Aura* GetCreatedAura() { return m_spellAura; }
     [[nodiscard]] Aura const* GetCreatedAura() const { return m_spellAura; }
 

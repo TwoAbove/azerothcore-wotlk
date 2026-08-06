@@ -107,6 +107,19 @@ void ScriptMgr::OnCalculatePowerCost(Spell* spell, int32& powerCost)
         script->OnCalculatePowerCost(spell, powerCost));
 }
 
+void ScriptMgr::ModifyAuraEffectPeriodicTimeRate(AuraEffect const* effect, Unit* caster,
+    double& timeRate)
+{
+    CALL_ENABLED_HOOKS(AllSpellScript, ALLSPELLHOOK_MODIFY_AURA_EFFECT_PERIODIC_TIME_RATE,
+        script->ModifyAuraEffectPeriodicTimeRate(effect, caster, timeRate));
+}
+
+void ScriptMgr::OnAuraRemove(Aura const* aura, AuraRemoveMode removeMode)
+{
+    CALL_ENABLED_HOOKS(AllSpellScript, ALLSPELLHOOK_ON_AURA_REMOVE,
+        script->OnAuraRemove(aura, removeMode));
+}
+
 bool ScriptMgr::CanCastWhileMoving(Spell const* spell)
 {
     CALL_ENABLED_BOOLEAN_HOOKS_WITH_DEFAULT_FALSE(AllSpellScript, ALLSPELLHOOK_CAN_CAST_WHILE_MOVING, script->CanCastWhileMoving(spell));

@@ -677,6 +677,9 @@ public: /* SpellSC */
     void OnSpellCast(Spell* spell, Unit* caster, SpellInfo const* spellInfo, bool skipCheck);
     void OnSpellPrepare(Spell* spell, Unit* caster, SpellInfo const* spellInfo);
     void OnCalculatePowerCost(Spell* spell, int32& powerCost);
+    void ModifyAuraEffectPeriodicTimeRate(AuraEffect const* effect, Unit* caster,
+        double& timeRate);
+    void OnAuraRemove(Aura const* aura, AuraRemoveMode removeMode);
 
 public: /* GameEventScript */
     void OnGameEventStart(uint16 EventID);
