@@ -519,6 +519,7 @@ void Aura::_Remove(AuraRemoveMode removeMode)
 {
     ASSERT (!m_isRemoved);
     m_isRemoved = true;
+    sScriptMgr->OnAuraRemove(this, removeMode);
     ApplicationMap::iterator appItr = m_applications.begin();
     for (appItr = m_applications.begin(); appItr != m_applications.end();)
     {

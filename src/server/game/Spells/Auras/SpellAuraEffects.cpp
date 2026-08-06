@@ -40,6 +40,8 @@
 #include "Vehicle.h"
 #include "WorldPacket.h"
 
+#include <cmath>
+
 /// @todo: this import is not necessary for compilation and marked as unused by the IDE
 //  however, for some reasons removing it would cause a damn linking issue
 //  there is probably some underlying problem with imports which should properly addressed
@@ -384,7 +386,7 @@ pAuraEffectHandler AuraEffectHandler[TOTAL_AURAS] =
 AuraEffect::AuraEffect(Aura* base, uint8 effIndex, int32* baseAmount, Unit* caster):
     m_base(base), m_spellInfo(base->GetSpellInfo()),
     m_baseAmount(baseAmount ? * baseAmount : m_spellInfo->Effects[effIndex].BasePoints), m_dieSides(m_spellInfo->Effects[effIndex].DieSides),
-    m_critChance(0), m_pctMods(1.0f), m_oldAmount(0), m_isAuraEnabled(true), m_channelData(nullptr), m_spellmod(nullptr), m_periodicTimer(0), m_amplitude(0), m_tickNumber(0), m_effIndex(effIndex),
+    m_critChance(0), m_pctMods(1.0f), m_oldAmount(0), m_isAuraEnabled(true), m_channelData(nullptr), m_spellmod(nullptr), m_periodicTimer(0), m_periodicTimeRemainder(0.0), m_amplitude(0), m_tickNumber(0), m_effIndex(effIndex),
     m_canBeRecalculated(true), m_isPeriodic(false)
 {
     CalculatePeriodic(caster, true, false);
@@ -655,7 +657,7 @@ void AuraEffect::CalculatePeriodic(Unit* caster, bool create, bool load)
     if (load) // aura loaded from db
     {
         m_tickNumber = m_amplitude ? GetBase()->GetDuration() / m_amplitude : 0;
-        m_periodicTimer = m_amplitude ? GetBase()->GetDuration() % m_amplitude : 0;
+        SetPeriodicTimer(m_amplitude ? GetBase()->GetDuration() % m_amplitude : 0);
         if (m_spellInfo->HasAttribute(SPELL_ATTR5_EXTRA_INITIAL_PERIOD))
             ++m_tickNumber;
     }
@@ -670,7 +672,7 @@ void AuraEffect::CalculatePeriodic(Unit* caster, bool create, bool load)
 
         if (resetPeriodicTimer)
         {
-            m_periodicTimer = 0;
+            SetPeriodicTimer(0);
             // Start periodic on next tick or at aura apply
             if (m_amplitude)
             {
@@ -929,7 +931,15 @@ void AuraEffect::Update(uint32 diff, Unit* caster)
     {
         uint32 totalTicks = GetTotalTicks();
 
-        m_periodicTimer -= int32(diff);
+        double timeRate = 1.0;
+        sScriptMgr->ModifyAuraEffectPeriodicTimeRate(this, caster, timeRate);
+        if (!std::isfinite(timeRate) || timeRate < 0.0)
+            timeRate = 1.0;
+
+        double elapsed = double(diff) * timeRate + m_periodicTimeRemainder;
+        double wholeMilliseconds = std::floor(elapsed);
+        m_periodicTimeRemainder = elapsed - wholeMilliseconds;
+        m_periodicTimer -= int32(wholeMilliseconds);
         while (m_periodicTimer <= 0)
         {
             if (!GetBase()->IsPermanent() && (m_tickNumber + 1) > totalTicks)

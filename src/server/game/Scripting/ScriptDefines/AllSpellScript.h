@@ -42,6 +42,8 @@ enum AllSpellHook
     ALLSPELLHOOK_CAN_CAST_WHILE_MOVING,
     ALLSPELLHOOK_CAN_CAST_WHILE_MOUNTED,
     ALLSPELLHOOK_ON_CALCULATE_POWER_COST,
+    ALLSPELLHOOK_MODIFY_AURA_EFFECT_PERIODIC_TIME_RATE,
+    ALLSPELLHOOK_ON_AURA_REMOVE,
     ALLSPELLHOOK_END
 };
 
@@ -116,6 +118,12 @@ public:
 
     virtual void OnSpellPrepare(Spell* /*spell*/, Unit* /*caster*/, SpellInfo const* /*spellInfo*/) { }
     virtual void OnCalculatePowerCost(Spell* /*spell*/, int32& /*powerCost*/) { }
+
+    // Multiply the finite, nonnegative timeRate to compose independent cadence modifiers.
+    virtual void ModifyAuraEffectPeriodicTimeRate(AuraEffect const* /*effect*/, Unit* /*caster*/, double& /*timeRate*/) { }
+
+    // Called once when the base aura begins removal, before its applications are torn down.
+    virtual void OnAuraRemove(Aura const* /*aura*/, AuraRemoveMode /*removeMode*/) { }
 
     // Return true to let this spell keep casting/channeling while the caster moves.
     [[nodiscard]] virtual bool CanCastWhileMoving(Spell const* /*spell*/) { return false; }

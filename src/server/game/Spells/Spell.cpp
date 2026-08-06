@@ -9031,6 +9031,8 @@ void TriggeredByAuraSpellData::Init(AuraEffect const* aurEff)
     spellInfo = aurEff->GetSpellInfo();
     effectIndex = aurEff->GetEffIndex();
     tickNumber = aurEff->GetTickNumber();
+    sourceOwnerGuid = aurEff->GetBase()->GetOwner()->GetGUID();
+    sourceCasterGuid = aurEff->GetCasterGUID();
 }
 
 std::string Spell::GetDebugInfo() const

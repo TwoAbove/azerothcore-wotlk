@@ -66,7 +66,7 @@ public:
     void SetAmount(int32 amount) { m_amount = amount; m_canBeRecalculated = false;}
 
     int32 GetPeriodicTimer() const { return m_periodicTimer; }
-    void SetPeriodicTimer(int32 periodicTimer) { m_periodicTimer = periodicTimer; }
+    void SetPeriodicTimer(int32 periodicTimer) { m_periodicTimer = periodicTimer; m_periodicTimeRemainder = 0.0; }
 
     int32 CalculateAmount(Unit* caster);
     void CalculatePeriodic(Unit* caster, bool create = false, bool load = false);
@@ -86,7 +86,12 @@ public:
 
     uint32 GetTickNumber() const { return m_tickNumber; }
     int32 GetTotalTicks() const;
-    void ResetPeriodic(bool resetPeriodicTimer = false) { if (resetPeriodicTimer) m_periodicTimer = m_amplitude; m_tickNumber = 0;}
+    void ResetPeriodic(bool resetPeriodicTimer = false)
+    {
+        if (resetPeriodicTimer)
+            SetPeriodicTimer(m_amplitude);
+        m_tickNumber = 0;
+    }
     void ResetTicks() { m_tickNumber = 0; }
 
     bool IsPeriodic() const { return m_isPeriodic; }
@@ -138,6 +143,7 @@ private:
     SpellModifier* m_spellmod;
 
     int32 m_periodicTimer;
+    double m_periodicTimeRemainder;
     int32 m_amplitude;
     uint32 m_tickNumber;
 

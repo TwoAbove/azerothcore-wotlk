@@ -204,14 +204,11 @@ struct BonusDefinition
 Settings _settings;
 uint32 _settingsRevision = 0;
 
-struct PeriodicAreaSource
+struct PeriodicAreaState
 {
     ObjectGuid ownerGuid;
     ObjectGuid casterGuid;
-    SpellInfo const* spellInfo = nullptr;
-    Aura* dynamicAura = nullptr;
-    uint8 periodicEffectMask = 0;
-    std::array<double, MAX_SPELL_EFFECTS> tempoRemainders{};
+    uint32 spellId = 0;
     bool damaging = false;
     bool opportunity = false;
 };
@@ -244,7 +241,7 @@ struct TertiaryState : public DataMap::Base
     SpellInfo const* opportunityCastInfo = nullptr;
     Spell* opportunityChannel = nullptr;
     SpellInfo const* opportunityChannelInfo = nullptr;
-    std::vector<PeriodicAreaSource> periodicAreas;
+    std::vector<PeriodicAreaState> periodicAreas;
 };
 
 struct ProcessingGuard
@@ -1490,25 +1487,22 @@ bool IsTempoPeriodicEffect(SpellInfo const* spellInfo, AuraEffect const* effect)
     }
 }
 
-Aura* FindPeriodicAreaAura(Player* player, PeriodicAreaSource const& source)
+bool MatchesPeriodicArea(PeriodicAreaState const& area, ObjectGuid ownerGuid,
+    ObjectGuid casterGuid, uint32 spellId)
 {
-    WorldObject* owner = ObjectAccessor::GetWorldObject(*player, source.ownerGuid);
-    if (!owner || !source.spellInfo)
-        return nullptr;
+    return area.ownerGuid == ownerGuid && area.casterGuid == casterGuid
+        && area.spellId == spellId;
+}
 
-    Aura* aura = nullptr;
-    if (DynamicObject* dynObj = owner->ToDynObject())
-    {
-        // DynamicObject retains its removed aura until it leaves the object store.
-        if (!source.dynamicAura || dynObj->GetSpellId() != source.spellInfo->Id
-            || dynObj->GetCasterGUID() != source.casterGuid || source.dynamicAura->IsRemoved())
-            return nullptr;
-        aura = source.dynamicAura;
-    }
-    else if (Unit* unit = owner->ToUnit())
-        aura = unit->GetOwnedAura(source.spellInfo->Id, source.casterGuid);
-    return aura && aura->GetSpellInfo() == source.spellInfo
-        && aura->GetCasterGUID() == source.casterGuid ? aura : nullptr;
+PeriodicAreaState const* FindPeriodicArea(TertiaryState const& state, ObjectGuid ownerGuid,
+    ObjectGuid casterGuid, uint32 spellId)
+{
+    auto area = std::find_if(state.periodicAreas.begin(), state.periodicAreas.end(),
+        [ownerGuid, casterGuid, spellId](PeriodicAreaState const& candidate)
+        {
+            return MatchesPeriodicArea(candidate, ownerGuid, casterGuid, spellId);
+        });
+    return area != state.periodicAreas.end() ? &*area : nullptr;
 }
 
 void RemovePeriodicArea(TertiaryState& state, Aura const* aura)
@@ -1517,20 +1511,12 @@ void RemovePeriodicArea(TertiaryState& state, Aura const* aura)
         return;
 
     ObjectGuid const ownerGuid = aura->GetOwner()->GetGUID();
+    ObjectGuid const casterGuid = aura->GetCasterGUID();
+    uint32 const spellId = aura->GetSpellInfo()->Id;
     state.periodicAreas.erase(std::remove_if(state.periodicAreas.begin(),
-        state.periodicAreas.end(), [aura, ownerGuid](PeriodicAreaSource const& source)
+        state.periodicAreas.end(), [ownerGuid, casterGuid, spellId](PeriodicAreaState const& area)
         {
-            return source.ownerGuid == ownerGuid && source.casterGuid == aura->GetCasterGUID()
-                && source.spellInfo == aura->GetSpellInfo();
-        }), state.periodicAreas.end());
-}
-
-void PrunePeriodicAreas(Player* player, TertiaryState& state)
-{
-    state.periodicAreas.erase(std::remove_if(state.periodicAreas.begin(),
-        state.periodicAreas.end(), [player](PeriodicAreaSource const& source)
-        {
-            return !FindPeriodicAreaAura(player, source);
+            return MatchesPeriodicArea(area, ownerGuid, casterGuid, spellId);
         }), state.periodicAreas.end());
 }
 
@@ -1541,13 +1527,23 @@ void RegisterPeriodicArea(Spell* spell, TertiaryState& state, bool opportunity)
     if (!aura || !aura->GetOwner() || !IsPeriodicAreaCandidate(spellInfo))
         return;
 
+    bool hasTempoPeriodicEffect = false;
+    for (uint8 index = 0; index < MAX_SPELL_EFFECTS; ++index)
+        if (IsTempoPeriodicEffect(spellInfo, aura->GetEffect(index)))
+        {
+            hasTempoPeriodicEffect = true;
+            break;
+        }
+    if (!hasTempoPeriodicEffect)
+        return;
+
     ObjectGuid const ownerGuid = aura->GetOwner()->GetGUID();
     ObjectGuid const casterGuid = aura->GetCasterGUID();
+    uint32 const spellId = spellInfo->Id;
     auto existing = std::find_if(state.periodicAreas.begin(), state.periodicAreas.end(),
-        [ownerGuid, casterGuid, spellInfo](PeriodicAreaSource const& source)
+        [ownerGuid, casterGuid, spellId](PeriodicAreaState const& area)
         {
-            return source.ownerGuid == ownerGuid && source.casterGuid == casterGuid
-                && source.spellInfo == spellInfo;
+            return MatchesPeriodicArea(area, ownerGuid, casterGuid, spellId);
         });
     if (existing != state.periodicAreas.end())
     {
@@ -1556,29 +1552,20 @@ void RegisterPeriodicArea(Spell* spell, TertiaryState& state, bool opportunity)
         return;
     }
 
-    PeriodicAreaSource source;
-    source.ownerGuid = ownerGuid;
-    source.casterGuid = casterGuid;
-    source.spellInfo = spellInfo;
-    source.dynamicAura = aura->GetOwner()->IsDynamicObject() ? aura : nullptr;
-    source.opportunity = opportunity;
-    source.damaging = IsKnownDamagingPeriodicArea(spellInfo);
-    for (uint8 index = 0; index < MAX_SPELL_EFFECTS; ++index)
-        if (IsTempoPeriodicEffect(spellInfo, aura->GetEffect(index)))
-            source.periodicEffectMask |= 1u << index;
-
-    if (source.periodicEffectMask)
-        state.periodicAreas.push_back(source);
+    state.periodicAreas.push_back({ ownerGuid, casterGuid, spellId,
+        IsKnownDamagingPeriodicArea(spellInfo), opportunity });
 }
 
 bool IsOpportunityAreaOutput(TertiaryState const& state, Spell const* spell)
 {
     SpellInfo const* sourceInfo = spell ? spell->GetTriggeredByAuraSpellInfo() : nullptr;
-    return sourceInfo && std::any_of(state.periodicAreas.begin(), state.periodicAreas.end(),
-        [sourceInfo](PeriodicAreaSource const& source)
-        {
-            return source.opportunity && source.spellInfo == sourceInfo;
-        });
+    if (!sourceInfo)
+        return false;
+
+    PeriodicAreaState const* area = FindPeriodicArea(state,
+        spell->GetTriggeredByAuraOwnerGUID(), spell->GetTriggeredByAuraCasterGUID(),
+        sourceInfo->Id);
+    return area && area->opportunity;
 }
 
 void MarkDamagingAreaOutput(TertiaryState& state, Spell const* spell)
@@ -1588,42 +1575,11 @@ void MarkDamagingAreaOutput(TertiaryState& state, Spell const* spell)
     if (!sourceInfo || (!HasDirectDamageEffect(outputInfo) && !HasPeriodicCritEffect(outputInfo)))
         return;
 
-    for (PeriodicAreaSource& source : state.periodicAreas)
-        if (source.spellInfo == sourceInfo)
-            source.damaging = true;
-}
-
-void AdvanceTempoAreas(Player* player, TertiaryState& state, uint32 diff)
-{
-    PrunePeriodicAreas(player, state);
-    if (!diff || !player->HasAura(SPELL_TEMPO))
-        return;
-
-    double rate = double(TempoSpeed(state)) / 100.0;
-    if (rate <= 0.0)
-        return;
-
-    for (PeriodicAreaSource& source : state.periodicAreas)
-    {
-        Aura* aura = FindPeriodicAreaAura(player, source);
-        if (!source.damaging)
-            continue;
-        for (uint8 index = 0; index < MAX_SPELL_EFFECTS; ++index)
-        {
-            if (!(source.periodicEffectMask & (1u << index)))
-                continue;
-
-            AuraEffect* effect = aura->GetEffect(index);
-            if (!effect)
-                continue;
-
-            double accelerated = double(diff) * rate + source.tempoRemainders[index];
-            int32 wholeMilliseconds = int32(std::floor(accelerated));
-            source.tempoRemainders[index] = accelerated - wholeMilliseconds;
-            if (wholeMilliseconds)
-                effect->SetPeriodicTimer(effect->GetPeriodicTimer() - wholeMilliseconds);
-        }
-    }
+    ObjectGuid const ownerGuid = spell->GetTriggeredByAuraOwnerGUID();
+    ObjectGuid const casterGuid = spell->GetTriggeredByAuraCasterGUID();
+    for (PeriodicAreaState& area : state.periodicAreas)
+        if (MatchesPeriodicArea(area, ownerGuid, casterGuid, sourceInfo->Id))
+            area.damaging = true;
 }
 
 bool IsSameFamilyOutput(SpellInfo const* source, SpellInfo const* output)
@@ -2115,7 +2071,6 @@ public:
             return;
 
         state = EnsureState(player);
-        AdvanceTempoAreas(player, *state, diff);
         Fabled::HandleUpdate(player, diff);
         if (state->pendingUnbroken)
             TriggerUnbroken(player, *state);
@@ -2370,8 +2325,6 @@ public:
         if (_settings.enabled && _dbcReady && player && aurApp)
             Fabled::HandleAuraRemove(player, aurApp->GetBase());
         TertiaryState* state = player ? FindState(player) : nullptr;
-        if (state && aurApp && aurApp->GetBase()->GetOwner() == player)
-            RemovePeriodicArea(*state, aurApp->GetBase());
         if (_settings.enabled && _dbcReady && state && aurApp
             && IsAllStatPercentAura(aurApp->GetBase()->GetSpellInfo()))
             state->needsRefresh = true;
@@ -2384,7 +2337,38 @@ public:
     TertiaryStatsSpell() : AllSpellScript("TertiaryStatsSpell",
         { ALLSPELLHOOK_ON_CALC_CRIT_CHANCE, ALLSPELLHOOK_ON_CALC_PERIODIC_CRIT_CHANCE,
           ALLSPELLHOOK_ON_CAST, ALLSPELLHOOK_ON_CAST_CANCEL,
+          ALLSPELLHOOK_MODIFY_AURA_EFFECT_PERIODIC_TIME_RATE, ALLSPELLHOOK_ON_AURA_REMOVE,
           ALLSPELLHOOK_CAN_CAST_WHILE_MOVING, ALLSPELLHOOK_CAN_CAST_WHILE_MOUNTED }) { }
+
+    void ModifyAuraEffectPeriodicTimeRate(AuraEffect const* effect, Unit* caster,
+        double& timeRate) override
+    {
+        if (!_settings.enabled || !_dbcReady || !effect || !caster
+            || !IsTempoPeriodicEffect(effect->GetSpellInfo(), effect))
+            return;
+
+        Player* player = caster->GetCharmerOrOwnerPlayerOrPlayerItself();
+        TertiaryState* state = player ? FindState(player) : nullptr;
+        Aura const* aura = effect->GetBase();
+        if (!state || !player->HasAura(SPELL_TEMPO) || !aura || !aura->GetOwner())
+            return;
+
+        PeriodicAreaState const* area = FindPeriodicArea(*state,
+            aura->GetOwner()->GetGUID(), aura->GetCasterGUID(), aura->GetSpellInfo()->Id);
+        if (area && area->damaging)
+            timeRate *= 1.0 + double(TempoSpeed(*state)) / 100.0;
+    }
+
+    void OnAuraRemove(Aura const* aura, AuraRemoveMode /*removeMode*/) override
+    {
+        if (!aura)
+            return;
+
+        Unit* caster = aura->GetCaster();
+        Player* player = caster ? caster->GetCharmerOrOwnerPlayerOrPlayerItself() : nullptr;
+        if (TertiaryState* state = player ? FindState(player) : nullptr)
+            RemovePeriodicArea(*state, aura);
+    }
 
     void OnCalcCritChance(Spell* spell, Unit* target, float& critChance) override
     {
@@ -3255,45 +3239,71 @@ public:
                 context.Expect(damage > 0, "baseline Death and Decay deals damage",
                     "damage=" + std::to_string(damage));
                 TertiaryState* state = EnsureState(actor);
-                auto areaSource = std::find_if(state->periodicAreas.begin(),
-                    state->periodicAreas.end(), [](PeriodicAreaSource const& source)
-                    {
-                        return source.spellInfo && source.spellInfo->Id == 49938;
-                    });
-                AuraEffect* periodicEffect = nullptr;
-                if (areaSource != state->periodicAreas.end())
-                    if (Aura* areaAura = FindPeriodicAreaAura(actor, *areaSource))
-                        for (uint8 index = 0; index < MAX_SPELL_EFFECTS; ++index)
-                            if (areaSource->periodicEffectMask & (1u << index))
-                            {
-                                periodicEffect = areaAura->GetEffect(index);
-                                break;
-                            }
+                PeriodicAreaState const* area = FindPeriodicArea(*state, _areaOwnerGuid,
+                    actor->GetGUID(), 49938);
+                context.Expect(area && area->damaging && _areaPeriodicEffect,
+                    "Death and Decay promotes its exact periodic area after damaging output");
 
-                context.Expect(periodicEffect != nullptr,
-                    "Death and Decay registers its periodic area cadence");
-                if (periodicEffect)
+                PeriodicAreaState otherOwner{
+                    _areaDummyGuid, actor->GetGUID(), 49938, false, true };
+                state->periodicAreas.push_back(otherOwner);
+                PeriodicAreaState const* exactArea = FindPeriodicArea(*state, _areaOwnerGuid,
+                    actor->GetGUID(), 49938);
+                PeriodicAreaState const* isolatedArea = FindPeriodicArea(*state, _areaDummyGuid,
+                    actor->GetGUID(), 49938);
+                context.Expect(exactArea && exactArea->damaging && !exactArea->opportunity
+                        && isolatedArea && !isolatedArea->damaging && isolatedArea->opportunity,
+                    "same-spell area state remains isolated by source owner GUID");
+                state->periodicAreas.pop_back();
+
+                if (_areaPeriodicEffect)
                 {
-                    int32 timerBeforeTempo = periodicEffect->GetPeriodicTimer();
+                    float savedTempoPoints = state->points[PowerIndex(Power::Tempo)];
+                    float targetTempoPercent =
+                        std::ceil(_settings.tempoSpeedBase / 10.0f) * 10.0f + 7.5f;
+                    if (_settings.tempoSpeedPerPoint > 0.0f)
+                        state->points[PowerIndex(Power::Tempo)] =
+                            (targetTempoPercent - _settings.tempoSpeedBase)
+                            / _settings.tempoSpeedPerPoint;
+
                     CastTertiarySpell(actor, *state, actor, SPELL_TEMPO, 10, 10, 10,
                         _settings.tempoDurationMs);
-                    constexpr uint32 ADVANCE_MS = 200;
-                    AdvanceTempoAreas(actor, *state, ADVANCE_MS);
-                    int32 expectedAcceleration =
-                        int32(std::floor(double(ADVANCE_MS) * TempoSpeed(*state) / 100.0));
-                    int32 timerWithTempo = periodicEffect->GetPeriodicTimer();
-                    context.Expect(timerBeforeTempo - timerWithTempo == expectedAcceleration,
-                        "Tempo accelerates an existing damaging area",
-                        "before=" + std::to_string(timerBeforeTempo)
-                            + ",after=" + std::to_string(timerWithTempo)
-                            + ",expected=" + std::to_string(expectedAcceleration));
+                    double timeRate = 1.0 + double(TempoSpeed(*state)) / 100.0;
+                    constexpr uint32 SPLIT_UPDATES = 40;
+                    _areaPeriodicEffect->SetPeriodicTimer(10000);
+                    for (uint32 update = 0; update < SPLIT_UPDATES; ++update)
+                        _areaPeriodicEffect->Update(1, actor);
+                    int32 splitElapsed = 10000 - _areaPeriodicEffect->GetPeriodicTimer();
+                    int32 expectedElapsed = int32(std::floor(double(SPLIT_UPDATES) * timeRate));
+                    int32 elapsedWithoutRemainder =
+                        int32(SPLIT_UPDATES) * int32(std::floor(timeRate));
+                    context.Expect(splitElapsed == expectedElapsed
+                            && expectedElapsed != elapsedWithoutRemainder,
+                        "Tempo scheduler preserves fractional time across split updates",
+                        "elapsed=" + std::to_string(splitElapsed)
+                            + ",expected=" + std::to_string(expectedElapsed));
+
+                    _areaPeriodicEffect->SetPeriodicTimer(10000);
+                    _areaPeriodicEffect->Update(1, actor);
+                    _areaPeriodicEffect->SetPeriodicTimer(10000);
+                    _areaPeriodicEffect->Update(5, actor);
+                    context.Expect(10000 - _areaPeriodicEffect->GetPeriodicTimer()
+                            == int32(std::floor(5.0 * timeRate)),
+                        "setting a periodic timer clears its fractional remainder");
+
+                    state->points[PowerIndex(Power::Tempo)] = savedTempoPoints;
                     actor->RemoveAurasDueToSpell(SPELL_TEMPO);
-                    AdvanceTempoAreas(actor, *state, ADVANCE_MS);
-                    context.Expect(periodicEffect->GetPeriodicTimer() == timerWithTempo,
+                    _areaPeriodicEffect->SetPeriodicTimer(10000);
+                    _areaPeriodicEffect->Update(SPLIT_UPDATES, actor);
+                    context.Expect(10000 - _areaPeriodicEffect->GetPeriodicTimer()
+                            == int32(SPLIT_UPDATES),
                         "area cadence returns to normal when Tempo expires");
                 }
                 actor->RemoveAurasDueToSpell(SPELL_TEMPO);
+                _areaPeriodicEffect = nullptr;
                 actor->RemoveDynObject(49938);
+                context.Expect(state->periodicAreas.empty(),
+                    "base aura removal synchronously releases periodic area state");
                 context.Expect(StartDeathAndDecay(context, actor, *state, true),
                     "Opportunity Death and Decay creates its area");
                 _stage = Stage::AwaitAreaEmpowered;
@@ -3308,12 +3318,12 @@ public:
                     + ",empowered=" + std::to_string(damage));
             context.Expect(!actor->HasAura(SPELL_OPPORTUNITY)
                     && std::any_of(state->periodicAreas.begin(), state->periodicAreas.end(),
-                        [](PeriodicAreaSource const& source) { return source.opportunity; }),
+                        [](PeriodicAreaState const& area) { return area.opportunity; }),
                 "Death and Decay consumes Opportunity and retains its area source");
+            _areaPeriodicEffect = nullptr;
             actor->RemoveDynObject(49938);
-            PrunePeriodicAreas(actor, *state);
             context.Expect(state->periodicAreas.empty(),
-                "expired areas release persistent Opportunity state");
+                "expired areas release persistent Opportunity state synchronously");
             RestoreShadowCrit(actor);
             FinishFeatureTests(context, actor, state);
             return;
@@ -3608,6 +3618,8 @@ private:
         if (!dummy || !spellInfo)
             return false;
 
+        _areaPeriodicEffect = nullptr;
+        _areaOwnerGuid.Clear();
         actor->RemoveDynObject(spellInfo->Id);
         if (empowered)
             CastTertiarySpell(actor, state, actor, SPELL_OPPORTUNITY, 0, 0, 0,
@@ -3621,7 +3633,19 @@ private:
             dummy->GetPositionZ(), dummy->GetOrientation());
         spell.InitExplicitTargets(targets);
         spell.cast(true);
-        return actor->GetDynObject(spellInfo->Id) != nullptr;
+        if (Aura* aura = spell.GetCreatedAura())
+        {
+            if (aura->GetOwner())
+                _areaOwnerGuid = aura->GetOwner()->GetGUID();
+            for (uint8 index = 0; index < MAX_SPELL_EFFECTS; ++index)
+                if (IsTempoPeriodicEffect(spellInfo, aura->GetEffect(index)))
+                {
+                    _areaPeriodicEffect = aura->GetEffect(index);
+                    break;
+                }
+        }
+        return actor->GetDynObject(spellInfo->Id) != nullptr
+            && !_areaOwnerGuid.IsEmpty() && _areaPeriodicEffect;
     }
 
     void RestoreShadowCrit(Player* actor)
@@ -3704,6 +3728,8 @@ private:
     uint16 _expectedBonusId = 0;
     int32 _nativeProperty = 0;
     ObjectGuid _areaDummyGuid;
+    ObjectGuid _areaOwnerGuid;
+    AuraEffect* _areaPeriodicEffect = nullptr;
     int64 _baselineAreaDamage = 0;
     float _savedShadowCrit = 0.0f;
     bool _shadowCritOverridden = false;
