@@ -163,7 +163,7 @@ def seconds(milliseconds):
 
 
 def spell_row(spell_id, name, icon_id, effects=(), auras=(), targets=(), duration=0,
-              attributes=0, attributes_ex2=0, amplitudes=(), misc_values=(),
+              attributes=0, attributes_ex2=0, amplitudes=(), misc_values=(), misc_values_b=(),
               school=1, damage_class=0, visual=0, aura_tooltip="", range_index=0,
               stack_amount=0, dispel=0, aura_interrupt_flags=0, attributes_ex3=0):
     row = [0] * SPELL_FIELDS
@@ -187,6 +187,8 @@ def spell_row(spell_id, name, icon_id, effects=(), auras=(), targets=(), duratio
         row[98 + index] = amplitude
     for index, misc in enumerate(misc_values):
         row[110 + index] = misc & 0xFFFFFFFF
+    for index, misc in enumerate(misc_values_b):
+        row[113 + index] = misc & 0xFFFFFFFF
     row[131] = visual
     row[133] = icon_id
     row[213] = damage_class
@@ -204,6 +206,7 @@ def custom_spells(settings):
     cannot_crit = 0x20000000
     ignore_line_of_sight = 0x00000004
     suppress_damage_procs = 0x20030000
+    school_absorb_order_last = 1
     return [
         spell_row(82001, "Avoidance", 4501, (6,), (229,), (1,), 21, hidden_passive),
         spell_row(82002, "Fleetfoot", 4502, (6, 6, 6), (129, 130, 58), (1, 1, 1), 21, hidden_passive),
@@ -269,7 +272,7 @@ def custom_spells(settings):
                   attributes_ex3=suppress_damage_procs,
                   school=1, damage_class=1, visual=0, range_index=1),
         spell_row(82023, "Vengeful Ghost", 1654, (6,), (69,), (1,), 21,
-                  hidden_passive, misc_values=(127,)),
+                  hidden_passive, misc_values=(127,), misc_values_b=(school_absorb_order_last,)),
     ]
 
 

@@ -94,8 +94,7 @@ public:
         {
             uint8 effectBit = 1u << index;
             if ((candidateEffectMask & effectBit)
-                && IsHardControlAura(spellInfo, effectBit)
-                && !player->IsImmunedToSpellEffect(spellInfo, index, caster))
+                && IsHardControlAura(spellInfo, effectBit))
                 addedMask |= effectBit;
         }
         if (!addedMask)

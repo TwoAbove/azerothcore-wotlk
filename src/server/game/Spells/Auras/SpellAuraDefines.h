@@ -380,6 +380,12 @@ enum AuraType
     TOTAL_AURAS                                             = 317
 };
 
+enum SchoolAbsorbOrder
+{
+    SCHOOL_ABSORB_ORDER_DEFAULT = 0,
+    SCHOOL_ABSORB_ORDER_LAST    = 1
+};
+
 enum AuraObjectType
 {
     UNIT_AURA_TYPE,
