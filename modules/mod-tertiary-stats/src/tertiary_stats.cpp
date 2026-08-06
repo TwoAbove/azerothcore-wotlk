@@ -2280,7 +2280,8 @@ public:
     }
 
     void OnDamageFinal(Unit* attacker, Unit* victim, uint32 damage,
-        DamageEffectType damageType, SpellInfo const* spellInfo, Spell const*) override
+        DamageEffectType damageType, SpellInfo const* spellInfo,
+        Spell const* damageSpell) override
     {
         if (!_settings.enabled || !_dbcReady || !attacker || !victim || !damage)
             return;
@@ -2288,8 +2289,10 @@ public:
         Player* owner = attacker->GetCharmerOrOwnerPlayerOrPlayerItself();
         TertiaryState* ownerState = owner ? FindState(owner) : nullptr;
         bool tertiaryOutput = IsTertiaryOutput(spellInfo);
-        Fabled::DamageKind kind = damageType == DOT
-            ? Fabled::DamageKind::Periodic
+        bool periodic = damageType == DOT
+            || (damageSpell && damageSpell->GetTriggeredByAuraSpellInfo()
+                && damageSpell->GetTriggeredByAuraTickNumber() > 0);
+        Fabled::DamageKind kind = periodic ? Fabled::DamageKind::Periodic
             : (spellInfo ? Fabled::DamageKind::Spell : Fabled::DamageKind::Melee);
 
         if (!tertiaryOutput)

@@ -20,6 +20,7 @@ namespace
 {
 constexpr TriggerCastFlags FABLED_TRIGGER_FLAGS =
     TriggerCastFlags(TRIGGERED_FULL_MASK | TRIGGERED_DISALLOW_PROC_EVENTS);
+constexpr uint32 SPELL_TEST_SCHOOL_ABSORB = 82008;
 
 void RemovePhase(Player* player, Runtime& runtime)
 {
@@ -91,13 +92,21 @@ class spell_fabled_vengeful_guard final : public AuraScript
 
         uint32 allowedDamage = player->GetHealth() > 1 ? player->GetHealth() - 1 : 0;
         absorbAmount = damageInfo.GetDamage() - allowedDamage;
-        if (runtime->vengefulGhost.phaseActive)
+    }
+
+    void AfterAbsorb(AuraEffect* /*effect*/, DamageInfo& damageInfo, uint32& absorbAmount)
+    {
+        Player* player = GetTarget()->ToPlayer();
+        Runtime* runtime = player ? FindRuntime(player) : nullptr;
+        if (!player || !runtime || runtime->vengefulGhost.phaseActive || !absorbAmount
+            || damageInfo.GetDamage() >= player->GetHealth())
             return;
 
         runtime->vengefulGhost.phaseActive = true;
-        runtime->vengefulGhost.phaseEndMs = Now() + GetSettings(player).vengefulPhaseMs;
+        uint32 phaseMs = GetSettings(player).vengefulPhaseMs;
+        runtime->vengefulGhost.phaseEndMs = Now() + phaseMs;
         StartLockout(player);
-        ApplyPhase(player, GetSettings(player).vengefulPhaseMs);
+        ApplyPhase(player, phaseMs);
     }
 
     void Register() override
@@ -107,6 +116,8 @@ class spell_fabled_vengeful_guard final : public AuraScript
             SPELL_AURA_SCHOOL_ABSORB);
         OnEffectAbsorb += AuraEffectAbsorbFn(spell_fabled_vengeful_guard::Absorb,
             EFFECT_0);
+        AfterEffectAbsorb += AuraEffectAbsorbFn(
+            spell_fabled_vengeful_guard::AfterAbsorb, EFFECT_0);
     }
 };
 
@@ -235,6 +246,21 @@ public:
         _firstDummyGuid = firstDummy->GetGUID();
         context.Expect(context.Engage(_firstDummyGuid), "first dummy engaged");
 
+        CustomSpellValues shieldValues;
+        shieldValues.AddSpellMod(SPELLVALUE_BASE_POINT0, int32(std::min<uint64>(
+            uint64(actor->GetHealth()) * 20, uint64(std::numeric_limits<int32>::max()))));
+        actor->CastCustomSpell(SPELL_TEST_SCHOOL_ABSORB, shieldValues, actor,
+            FABLED_TRIGGER_FLAGS);
+        context.Expect(actor->HasAura(SPELL_TEST_SCHOOL_ABSORB),
+            "ordinary school absorb applied ahead of Vengeful");
+        uint32 shieldedHealth = actor->GetHealth();
+        DealNativeTestDamage(firstDummy, actor);
+        context.Expect(actor->GetHealth() == shieldedHealth
+                && !runtime.vengefulGhost.phaseActive
+                && !actor->HasSpellCooldown(SPELL_VENGEFUL_COOLDOWN),
+            "ordinary school absorb resolves before the last-ordered Vengeful guard");
+        actor->RemoveAurasDueToSpell(SPELL_TEST_SCHOOL_ABSORB);
+
         uint32 firstLethalHealth = actor->GetHealth();
         context.ClearEvents();
         DealNativeTestDamage(firstDummy, actor);
@@ -346,6 +372,7 @@ private:
                 _equipped = false;
             }
             actor->RemoveAurasDueToSpell(SPELL_VENGEFUL_PHASE);
+            actor->RemoveAurasDueToSpell(SPELL_TEST_SCHOOL_ABSORB);
             actor->RemoveSpellCooldown(SPELL_VENGEFUL_COOLDOWN);
             if (!actor->IsAlive())
             {

@@ -3004,7 +3004,6 @@ SpellMissInfo Spell::DoSpellHitOnUnit(Unit* unit, uint32 effectMask, bool scaleA
 
     // disable effects to which unit is immune
     SpellMissInfo returnVal = SPELL_MISS_IMMUNE;
-    uint8 candidateEffectMask = uint8(effectMask);
     for (uint32 effectNumber = 0; effectNumber < MAX_SPELL_EFFECTS; ++effectNumber)
     {
         if (effectMask & (1 << effectNumber))
@@ -3032,6 +3031,28 @@ SpellMissInfo Spell::DoSpellHitOnUnit(Unit* unit, uint32 effectMask, bool scaleA
     if (!effectMask)
         return returnVal;
 
+    if (m_caster != unit && m_spellInfo->Speed > 0.0f)
+    {
+        if (unit->IsCreature() && unit->ToCreature()->IsInEvadeMode())
+            return SPELL_MISS_EVADE;
+
+        if (unit->HasUnitFlag(UNIT_FLAG_NON_ATTACKABLE)
+            && unit->GetCharmerOrOwnerGUID() != m_caster->GetGUID())
+            return SPELL_MISS_EVADE;
+
+        if (!IsTriggered() && unit->IsPlayer() && !m_spellInfo->IsPositive()
+            && m_caster->IsFriendlyTo(unit))
+            return SPELL_MISS_EVADE;
+    }
+
+    uint8 candidateEffectMask = uint8(effectMask);
+    uint8 supplementalImmuneEffectMask = 0;
+    sScriptMgr->ModifySpellEffectImmunityMask(unit, m_caster, m_spellInfo,
+        candidateEffectMask, supplementalImmuneEffectMask);
+    effectMask &= ~(supplementalImmuneEffectMask & candidateEffectMask);
+    if (!effectMask)
+        return returnVal;
+
     if (unit->IsPlayer())
     {
         unit->ToPlayer()->StartTimedAchievement(ACHIEVEMENT_TIMED_TYPE_SPELL_TARGET, m_spellInfo->Id);
@@ -3047,28 +3068,12 @@ SpellMissInfo Spell::DoSpellHitOnUnit(Unit* unit, uint32 effectMask, bool scaleA
 
     if (m_caster != unit)
     {
-        // Recheck  UNIT_FLAG_NON_ATTACKABLE for delayed spells
-        // Xinef: Also check evade state
-        if (m_spellInfo->Speed > 0.0f)
-        {
-            if (unit->IsCreature() && unit->ToCreature()->IsInEvadeMode())
-                return SPELL_MISS_EVADE;
-
-            if (unit->HasUnitFlag(UNIT_FLAG_NON_ATTACKABLE) && unit->GetCharmerOrOwnerGUID() != m_caster->GetGUID())
-                return SPELL_MISS_EVADE;
-        }
-
         if (m_caster->_IsValidAttackTarget(unit, m_spellInfo) && /*Intervene Trigger*/ m_spellInfo->Id != 59667)
         {
             unit->RemoveAurasWithInterruptFlags(AURA_INTERRUPT_FLAG_HITBYSPELL);
         }
         else if (m_caster->IsFriendlyTo(unit))
         {
-            // for delayed spells ignore negative spells (after duel end) for friendly targets
-            /// @todo: this cause soul transfer bugged
-            if (!IsTriggered() && m_spellInfo->Speed > 0.0f && unit->IsPlayer() && !m_spellInfo->IsPositive())
-                return SPELL_MISS_EVADE;
-
             // assisting case, healing and resurrection
             if (unit->HasUnitState(UNIT_STATE_ATTACK_PLAYER))
             {
@@ -3086,13 +3091,6 @@ SpellMissInfo Spell::DoSpellHitOnUnit(Unit* unit, uint32 effectMask, bool scaleA
             }
         }
     }
-
-    uint8 supplementalImmuneEffectMask = 0;
-    sScriptMgr->ModifySpellEffectImmunityMask(unit, m_caster, m_spellInfo,
-        candidateEffectMask, supplementalImmuneEffectMask);
-    effectMask &= ~(supplementalImmuneEffectMask & candidateEffectMask);
-    if (!effectMask)
-        return returnVal;
 
     uint8 aura_effmask = 0;
     for (uint8 i = 0; i < MAX_SPELL_EFFECTS; ++i)

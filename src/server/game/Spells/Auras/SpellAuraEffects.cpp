@@ -936,21 +936,32 @@ void AuraEffect::Update(uint32 diff, Unit* caster)
         if (!std::isfinite(timeRate) || timeRate < 0.0)
             timeRate = 1.0;
 
+        // Pathological rates may discard excess catch-up debt to bound world-thread work.
+        constexpr uint32 MaxTicksPerUpdate = 100;
+        int64 positiveAmplitude = std::max<int64>(m_amplitude, 1);
+        int64 maxAdvancement = std::max<int64>(
+            int64(m_periodicTimer) + positiveAmplitude * MaxTicksPerUpdate, 0);
         double elapsed = double(diff) * timeRate + m_periodicTimeRemainder;
-        double wholeMilliseconds = std::floor(elapsed);
-        m_periodicTimeRemainder = elapsed - wholeMilliseconds;
-        m_periodicTimer -= int32(wholeMilliseconds);
-        while (m_periodicTimer <= 0)
+        double boundedElapsed = std::isfinite(elapsed)
+            ? std::min(elapsed, double(maxAdvancement))
+            : double(maxAdvancement);
+        double wholeMilliseconds = std::floor(boundedElapsed);
+        m_periodicTimeRemainder = boundedElapsed - wholeMilliseconds;
+        int64 periodicTimer = int64(m_periodicTimer) - int64(wholeMilliseconds);
+        uint32 tickBudget = MaxTicksPerUpdate;
+        while (periodicTimer <= 0 && tickBudget > 0)
         {
             if (!GetBase()->IsPermanent() && (m_tickNumber + 1) > totalTicks)
             {
+                periodicTimer = positiveAmplitude;
                 break;
             }
 
+            --tickBudget;
             ++m_tickNumber;
 
             // update before tick (aura can be removed in TriggerSpell or PeriodicTick calls)
-            m_periodicTimer += m_amplitude;
+            periodicTimer += positiveAmplitude;
             UpdatePeriodic(caster);
 
             std::list<AuraApplication*> effectApplications;
@@ -960,6 +971,10 @@ void AuraEffect::Update(uint32 diff, Unit* caster)
                 if ((*apptItr)->HasEffect(GetEffIndex()))
                     PeriodicTick(*apptItr, caster);
         }
+
+        if (!tickBudget && periodicTimer <= 0)
+            periodicTimer = positiveAmplitude;
+        m_periodicTimer = int32(periodicTimer);
     }
 }
 
