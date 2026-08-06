@@ -4,7 +4,6 @@
 #include "fabled.h"
 #include "fabled_test_utils.h"
 
-#include "EventProcessor.h"
 #include "Item.h"
 #include "ObjectMgr.h"
 #include "Player.h"
@@ -81,7 +80,7 @@ public:
             player->RemoveAurasDueToSpell(SPELL_TOXICITY);
     }
 
-    void OnSpellCast(Player* player, Runtime& /*runtime*/, Spell* spell) override
+    void OnSpellCastComplete(Player* player, Runtime& /*runtime*/, Spell* spell) override
     {
         Item* castItem = spell ? spell->m_CastItem : nullptr;
         ItemTemplate const* itemTemplate = castItem ? castItem->GetTemplate() : nullptr;
@@ -93,16 +92,7 @@ public:
         uint32 spellId = spellInfo->Id;
         uint32 category = spellInfo->GetCategory();
 
-        // The player-cast hook runs before Spell::SendSpellCooldown. Clear any
-        // previous lock now, then clear the lock this cast creates on the next
-        // Unit event update (before another client item-use packet is handled).
         ClearPotionCooldown(player, spellId, category);
-        player->m_Events.AddEventAtOffset([player, spellId, category]
-        {
-            if (Has(GetRuntime(player), Effect::AlchemistsGut))
-                ClearPotionCooldown(player, spellId, category);
-        }, Milliseconds(1));
-
         AddToxicity(player);
     }
 };

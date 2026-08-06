@@ -28,13 +28,6 @@ void ScriptMgr::OnDamage(Unit* attacker, Unit* victim, uint32& damage)
 {
     CALL_ENABLED_HOOKS(UnitScript, UNITHOOK_ON_DAMAGE, script->OnDamage(attacker, victim, damage));
 }
-void ScriptMgr::ModifyDamageFinal(Unit* attacker, Unit* victim, uint32& damage,
-    DamageEffectType damageType, SpellInfo const* spellInfo, Spell const* damageSpell)
-{
-    CALL_ENABLED_HOOKS(UnitScript, UNITHOOK_MODIFY_DAMAGE_FINAL,
-        script->ModifyDamageFinal(attacker, victim, damage, damageType, spellInfo, damageSpell));
-}
-
 void ScriptMgr::OnDamageFinal(Unit* attacker, Unit* victim, uint32 damage,
     DamageEffectType damageType, SpellInfo const* spellInfo, Spell const* damageSpell)
 {
@@ -83,10 +76,12 @@ void ScriptMgr::OnBeforeRollMeleeOutcomeAgainst(Unit const* attacker, Unit const
     CALL_ENABLED_HOOKS(UnitScript, UNITHOOK_ON_BEFORE_ROLL_MELEE_OUTCOME_AGAINST, script->OnBeforeRollMeleeOutcomeAgainst(attacker, victim, attType, attackerMaxSkillValueForLevel, victimMaxSkillValueForLevel, attackerWeaponSkill, victimDefenseSkill, crit_chance, miss_chance, dodge_chance, parry_chance, block_chance));
 }
 
-void ScriptMgr::ModifyAuraEffectMask(Unit* unit, Aura* aura, uint8& effectMask)
+void ScriptMgr::ModifySpellEffectImmunityMask(Unit* target, Unit* caster,
+    SpellInfo const* spellInfo, uint8 candidateEffectMask, uint8& immuneEffectMask)
 {
-    CALL_ENABLED_HOOKS(UnitScript, UNITHOOK_MODIFY_AURA_EFFECT_MASK,
-        script->ModifyAuraEffectMask(unit, aura, effectMask));
+    CALL_ENABLED_HOOKS(UnitScript, UNITHOOK_MODIFY_SPELL_EFFECT_IMMUNITY_MASK,
+        script->ModifySpellEffectImmunityMask(target, caster, spellInfo,
+            candidateEffectMask, immuneEffectMask));
 }
 
 void ScriptMgr::OnAuraApply(Unit* unit, Aura* aura)

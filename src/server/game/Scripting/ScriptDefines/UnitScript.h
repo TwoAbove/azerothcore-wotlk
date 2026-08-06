@@ -25,14 +25,13 @@ enum UnitHook
 {
     UNITHOOK_ON_HEAL_FINAL,
     UNITHOOK_ON_DAMAGE,
-    UNITHOOK_MODIFY_DAMAGE_FINAL,
     UNITHOOK_ON_DAMAGE_FINAL,
     UNITHOOK_MODIFY_PERIODIC_DAMAGE_AURAS_TICK,
     UNITHOOK_MODIFY_MELEE_DAMAGE,
     UNITHOOK_MODIFY_SPELL_DAMAGE_TAKEN,
     UNITHOOK_MODIFY_HEAL_RECEIVED,
     UNITHOOK_ON_BEFORE_ROLL_MELEE_OUTCOME_AGAINST,
-    UNITHOOK_MODIFY_AURA_EFFECT_MASK,
+    UNITHOOK_MODIFY_SPELL_EFFECT_IMMUNITY_MASK,
     UNITHOOK_ON_AURA_APPLY,
     UNITHOOK_ON_AURA_REMOVE,
     UNITHOOK_IF_NORMAL_REACTION,
@@ -68,10 +67,7 @@ public:
 
     // Called when a unit deals damage to another unit
     virtual void OnDamage(Unit* /*attacker*/, Unit* /*victim*/, uint32& /*damage*/) { }
-    // Called after hit resolution and normal mitigation, before health is changed
-    virtual void ModifyDamageFinal(Unit* /*attacker*/, Unit* /*victim*/, uint32& /*damage*/, DamageEffectType /*damageType*/, SpellInfo const* /*spellInfo*/, Spell const* /*damageSpell*/) { }
-
-    // Called after final damage modifiers, before health is changed
+    // Called after hit resolution, mitigation, and safety caps, before health changes.
     virtual void OnDamageFinal(Unit* /*attacker*/, Unit* /*victim*/, uint32 /*damage*/, DamageEffectType /*damageType*/, SpellInfo const* /*spellInfo*/, Spell const* /*damageSpell*/) { }
 
 
@@ -93,9 +89,11 @@ public:
 
     virtual void OnBeforeRollMeleeOutcomeAgainst(Unit const* /*attacker*/, Unit const* /*victim*/, WeaponAttackType /*attType*/, int32& /*attackerMaxSkillValueForLevel*/, int32& /*victimMaxSkillValueForLevel*/, int32& /*attackerWeaponSkill*/, int32& /*victimDefenseSkill*/, int32& /*crit_chance*/, int32& /*miss_chance*/, int32& /*dodge_chance*/, int32& /*parry_chance*/, int32& /*block_chance*/ ) {   };
 
-    // Called before an aura is initially applied to a unit. Scripts may remove
-    // effects from effectMask; the core ignores attempts to add effects.
-    virtual void ModifyAuraEffectMask(Unit* /*unit*/, Aura* /*aura*/, uint8& /*effectMask*/) { }
+    // Adds effect bits to native spell immunity resolution. The core clamps
+    // additions to candidateEffectMask.
+    virtual void ModifySpellEffectImmunityMask(Unit* /*target*/, Unit* /*caster*/,
+        SpellInfo const* /*spellInfo*/, uint8 /*candidateEffectMask*/,
+        uint8& /*immuneEffectMask*/) { }
 
     virtual void OnAuraApply(Unit* /*unit*/, Aura* /*aura*/) { }
 

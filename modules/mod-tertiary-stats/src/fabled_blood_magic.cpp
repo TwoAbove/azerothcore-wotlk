@@ -12,6 +12,7 @@
 #include "SpellMgr.h"
 #include "SpellDefines.h"
 #include "SpellAuraEffects.h"
+#include "SpellScript.h"
 #include "SpellAuras.h"
 
 #include <algorithm>
@@ -25,16 +26,6 @@ namespace
 {
 constexpr uint32 SPELL_TEST_ARCANE_EXPLOSION = 1449;
 constexpr uint32 SPELL_TEST_FROSTBOLT = 116;
-constexpr uint32 BLOOD_DEBT_TICK_MS = 1000;
-
-void ResetBloodDebtSchedule(Player* player)
-{
-    Runtime& runtime = GetRuntime(player);
-    runtime.bloodDebtTickAccumulator = 0;
-    runtime.bloodDebtTicksRemaining = uint32(std::max<uint64>(1,
-        (uint64(GetSettings().bloodMagicDebtDurationMs) + BLOOD_DEBT_TICK_MS - 1)
-            / BLOOD_DEBT_TICK_MS));
-}
 
 int32 HealthCost(int32 missingMana)
 {
@@ -69,83 +60,49 @@ void AddBloodDebt(Player* player, int32 debt)
                 remaining, std::numeric_limits<int32>::max())));
             aura->SetMaxDuration(int32(GetSettings().bloodMagicDebtDurationMs));
             aura->SetDuration(int32(GetSettings().bloodMagicDebtDurationMs));
-            ResetBloodDebtSchedule(player);
+            if (AuraEffect* periodic = aura->GetEffect(EFFECT_1))
+                periodic->ResetPeriodic(true);
         }
         return;
     }
 
     CustomSpellValues values;
     values.AddSpellMod(SPELLVALUE_BASE_POINT0, debt);
+    values.AddSpellMod(SPELLVALUE_BASE_POINT1, 1);
     values.AddSpellMod(SPELLVALUE_AURA_DURATION,
         int32(GetSettings().bloodMagicDebtDurationMs));
     player->CastCustomSpell(SPELL_BLOOD_MAGIC_DEBT, values, player,
         TriggerCastFlags(TRIGGERED_FULL_MASK | TRIGGERED_DISALLOW_PROC_EVENTS));
-    if (player->HasAura(SPELL_BLOOD_MAGIC_DEBT))
-        ResetBloodDebtSchedule(player);
 }
 
-void UpdateBloodDebt(Player* player, uint32 diffMs)
+class spell_fabled_blood_debt final : public AuraScript
 {
-    Aura* aura = player ? player->GetAura(SPELL_BLOOD_MAGIC_DEBT) : nullptr;
-    Runtime* runtime = player ? FindRuntime(player) : nullptr;
-    if (!aura)
+    PrepareAuraScript(spell_fabled_blood_debt);
+
+    void UpdatePeriodic(AuraEffect* periodic)
     {
-        if (runtime)
+        AuraEffect* pool = GetAura()->GetEffect(EFFECT_0);
+        if (!pool || pool->GetAmount() <= 0)
         {
-            runtime->bloodDebtTickAccumulator = 0;
-            runtime->bloodDebtTicksRemaining = 0;
+            periodic->SetAmount(0);
+            return;
         }
-        return;
+
+        uint32 ticksRemaining = std::max<uint32>(1,
+            periodic->GetTotalTicks() - periodic->GetTickNumber() + 1);
+        int32 damage = int32((int64(pool->GetAmount()) + ticksRemaining - 1)
+            / ticksRemaining);
+        periodic->SetAmount(damage);
+        pool->SetAmount(pool->GetAmount() - damage);
     }
 
-    if (!runtime)
-        runtime = &GetRuntime(player);
-    AuraEffect* effect = aura->GetEffect(EFFECT_0);
-    int32 remaining = effect ? effect->GetAmount() : 0;
-    if (!effect || remaining <= 0)
+    void Register() override
     {
-        player->RemoveAurasDueToSpell(SPELL_BLOOD_MAGIC_DEBT);
-        return;
-    }
-    if (!runtime->bloodDebtTicksRemaining)
-    {
-        runtime->bloodDebtTicksRemaining = uint32(std::max<int64>(1,
-            (int64(std::max(aura->GetDuration(), 1)) + BLOOD_DEBT_TICK_MS - 1)
-                / BLOOD_DEBT_TICK_MS));
-    }
-
-    uint64 elapsed = uint64(runtime->bloodDebtTickAccumulator) + diffMs;
-    runtime->bloodDebtTickAccumulator = uint32(std::min<uint64>(
-        elapsed, std::numeric_limits<uint32>::max()));
-    while (runtime->bloodDebtTickAccumulator >= BLOOD_DEBT_TICK_MS
-        && runtime->bloodDebtTicksRemaining && player->IsAlive())
-    {
-        runtime->bloodDebtTickAccumulator -= BLOOD_DEBT_TICK_MS;
-        int32 damage = int32((int64(remaining) + runtime->bloodDebtTicksRemaining - 1)
-            / runtime->bloodDebtTicksRemaining);
-        --runtime->bloodDebtTicksRemaining;
-        remaining -= damage;
-        effect->SetAmount(remaining);
-        Unit::DealDamage(player, player, uint32(damage), nullptr, DOT,
-            SPELL_SCHOOL_MASK_SHADOW, aura->GetSpellInfo(), false, true, nullptr, DOT);
-    }
-
-    if (remaining <= 0 && player->IsAlive())
-        player->RemoveAurasDueToSpell(SPELL_BLOOD_MAGIC_DEBT);
-}
-
-class BloodDebtPlayerScript final : public PlayerScript
-{
-public:
-    BloodDebtPlayerScript() : PlayerScript("BloodDebtPlayerScript",
-        { PLAYERHOOK_ON_BEFORE_UPDATE }) { }
-
-    void OnPlayerBeforeUpdate(Player* player, uint32 diff) override
-    {
-        UpdateBloodDebt(player, diff);
+        OnEffectUpdatePeriodic += AuraEffectUpdatePeriodicFn(
+            spell_fabled_blood_debt::UpdatePeriodic, EFFECT_1,
+            SPELL_AURA_PERIODIC_DAMAGE);
     }
 };
-
 
 class BloodMagicPowerScript final : public AllSpellScript
 {
@@ -459,9 +416,13 @@ private:
 };
 } // namespace
 
+void RegisterBloodMagicSpellScripts()
+{
+    RegisterSpellScript(spell_fabled_blood_debt);
+}
+
 std::unique_ptr<Script> MakeBloodMagic()
 {
-    new BloodDebtPlayerScript();
     new BloodMagicPowerScript();
     TestHarness::RegisterSuite("fabled-blood-magic",
         [] { return std::make_unique<BloodMagicTestSuite>(); });

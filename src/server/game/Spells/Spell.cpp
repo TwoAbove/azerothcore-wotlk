@@ -3004,6 +3004,7 @@ SpellMissInfo Spell::DoSpellHitOnUnit(Unit* unit, uint32 effectMask, bool scaleA
 
     // disable effects to which unit is immune
     SpellMissInfo returnVal = SPELL_MISS_IMMUNE;
+    uint8 candidateEffectMask = uint8(effectMask);
     for (uint32 effectNumber = 0; effectNumber < MAX_SPELL_EFFECTS; ++effectNumber)
     {
         if (effectMask & (1 << effectNumber))
@@ -3027,6 +3028,7 @@ SpellMissInfo Spell::DoSpellHitOnUnit(Unit* unit, uint32 effectMask, bool scaleA
             }*/
         }
     }
+
     if (!effectMask)
         return returnVal;
 
@@ -3084,6 +3086,13 @@ SpellMissInfo Spell::DoSpellHitOnUnit(Unit* unit, uint32 effectMask, bool scaleA
             }
         }
     }
+
+    uint8 supplementalImmuneEffectMask = 0;
+    sScriptMgr->ModifySpellEffectImmunityMask(unit, m_caster, m_spellInfo,
+        candidateEffectMask, supplementalImmuneEffectMask);
+    effectMask &= ~(supplementalImmuneEffectMask & candidateEffectMask);
+    if (!effectMask)
+        return returnVal;
 
     uint8 aura_effmask = 0;
     for (uint8 i = 0; i < MAX_SPELL_EFFECTS; ++i)
@@ -8561,6 +8570,10 @@ void Spell::SetSpellValue(SpellValueMod mod, int32 value)
             break;
         case SPELLVALUE_MISCVALUE2:
             m_spellValue->MiscVal[2] = value;
+            break;
+        case SPELLVALUE_SCHOOL_MASK:
+            if (uint32(value) & SPELL_SCHOOL_MASK_ALL)
+                m_spellSchoolMask = SpellSchoolMask(uint32(value) & SPELL_SCHOOL_MASK_ALL);
             break;
     }
 }

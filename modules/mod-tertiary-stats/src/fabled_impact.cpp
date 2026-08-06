@@ -44,7 +44,7 @@ public:
             if (player->IsFriendlyTo(target))
                 continue;
 
-            DealEffectDamage(player, target, preventedDamage, SPELL_SCHOOL_MASK_NORMAL,
+            CastEffectDamage(player, target, preventedDamage, SPELL_SCHOOL_MASK_NORMAL,
                 SPELL_IMPACT_DAMAGE);
         }
     }
