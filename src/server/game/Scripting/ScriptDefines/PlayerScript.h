@@ -27,6 +27,8 @@
 #include "AchievementMgr.h"
 #include "KillRewarder.h"
 
+enum EnviromentalDamage : int;
+
 enum PlayerHook
 {
     PLAYERHOOK_ON_PLAYER_JUST_DIED,
@@ -470,7 +472,7 @@ public:
     virtual void OnPlayerBeforeDurabilityRepair(Player* /*player*/, ObjectGuid /*npcGUID*/, ObjectGuid /*itemGUID*/, float&/*discountMod*/, uint8 /*guildBank*/) { }
 
     // After native environmental mitigation, before damage is dealt and logged
-    virtual void OnPlayerEnvironmentalDamage(Player* /*player*/, uint8 /*type*/, uint32& /*damage*/) { }
+    virtual void OnPlayerEnvironmentalDamage(Player* /*player*/, EnviromentalDamage /*type*/, uint32& /*damage*/) { }
 
     // Positive durability loss only; repairs are never passed to this hook
     [[nodiscard]] virtual bool CanItemLoseDurability(Player* /*player*/, Item* /*item*/) { return true; }

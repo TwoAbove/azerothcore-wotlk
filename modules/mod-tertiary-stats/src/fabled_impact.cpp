@@ -25,7 +25,7 @@ class ImpactScript final : public Script
 public:
     ImpactScript() : Script(Effect::Impact) { }
 
-    void OnEnvironmentalDamage(Player* player, Runtime& /*runtime*/, uint8 type, uint32& damage) override
+    void OnEnvironmentalDamage(Player* player, Runtime& /*runtime*/, EnviromentalDamage type, uint32& damage) override
     {
         if (type != DAMAGE_FALL || !damage)
             return;

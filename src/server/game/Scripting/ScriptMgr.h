@@ -394,7 +394,7 @@ public: /* PlayerScript */
     bool OnPlayerBeforeQuestComplete(Player* player, uint32 quest_id);
     void OnPlayerQuestComputeXP(Player* player, Quest const* quest, uint32& xpValue);
     void OnPlayerBeforeDurabilityRepair(Player* player, ObjectGuid npcGUID, ObjectGuid itemGUID, float& discountMod, uint8 guildBank);
-    void OnPlayerEnvironmentalDamage(Player* player, uint8 type, uint32& damage);
+    void OnPlayerEnvironmentalDamage(Player* player, EnviromentalDamage type, uint32& damage);
     bool CanItemLoseDurability(Player* player, Item* item);
     bool CanAttackWhileMounted(Player* player, Unit* victim, bool meleeAttack);
     bool CanUseGameObjectWhileMounted(Player* player, GameObject* gameObject);
@@ -662,7 +662,6 @@ public: /* SpellSC */
     void OnCalcPeriodicCritChance(SpellInfo const* spellInfo, Unit const* caster,
         Unit const* target, float& critChance);
     void OnSpellCheckCast(Spell* spell, bool strict, SpellCastResult& res);
-    bool CanCastWithInsufficientPower(Spell const* spell);
     bool CanCastWhileMoving(Spell const* spell);
     bool CanCastWhileMounted(Spell const* spell);
     bool CanPrepare(Spell* spell, SpellCastTargets const* targets, AuraEffect const* triggeredByAura);

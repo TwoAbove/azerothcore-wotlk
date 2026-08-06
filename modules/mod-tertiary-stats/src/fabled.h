@@ -39,6 +39,8 @@ class Spell;
 class SpellInfo;
 class Unit;
 
+enum EnviromentalDamage : int;
+
 namespace Fabled
 {
 enum class Effect : uint8
@@ -254,7 +256,7 @@ public:
     virtual void OnIncomingDamage(Player* /*player*/, Runtime& /*runtime*/, Unit* /*attacker*/, uint32& /*damage*/) { }
 
     // Environmental damage (fall etc.); runs after Avoidance mitigation.
-    virtual void OnEnvironmentalDamage(Player* /*player*/, Runtime& /*runtime*/, uint8 /*type*/, uint32& /*damage*/) { }
+    virtual void OnEnvironmentalDamage(Player* /*player*/, Runtime& /*runtime*/, EnviromentalDamage /*type*/, uint32& /*damage*/) { }
 
     // Non-triggered spell lifecycle for the player's own casts.
     virtual void OnSpellCast(Player* /*player*/, Runtime& /*runtime*/, Spell* /*spell*/) { }
@@ -312,7 +314,7 @@ void HandleDealtDamageFinal(Player* attacker, Unit* victim, uint32 damage,
     SpellInfo const* spellInfo, DamageKind kind);
 void HandleIncomingDamage(Player* victim, Unit* attacker, uint32& damage);
 void HandleModifyAuraEffectMask(Player* player, Aura const* aura, uint8& effectMask);
-void HandleEnvironmentalDamage(Player* player, uint8 type, uint32& damage);
+void HandleEnvironmentalDamage(Player* player, EnviromentalDamage type, uint32& damage);
 void HandleSpellCast(Player* caster, Spell* spell);
 void HandleSpellCastCancel(Player* caster, Spell* spell);
 bool HandleCanCastWhileMoving(Spell const* spell);
