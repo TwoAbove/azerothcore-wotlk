@@ -79,8 +79,6 @@ class CavalierTestSuite final : public TestHarness::Suite
 public:
     void Start(TestHarness::Context& context) override
     {
-        _savedSettings = GetSettings();
-        _settingsSaved = true;
 
         Player* actor = context.GetActor();
         context.Expect(actor != nullptr, "headless actor available");
@@ -191,8 +189,6 @@ public:
 
         if (_stage == Stage::Cleanup)
         {
-            if (_settingsSaved)
-                MutableSettings() = _savedSettings;
             if (actor)
             {
                 Test::UnequipFabled(actor, Effect::Cavalier);
@@ -227,15 +223,17 @@ private:
 
     Stage _stage = Stage::Cleanup;
     ObjectGuid _dummyGuid;
-    Settings _savedSettings;
-    bool _settingsSaved = false;
 };
 } // namespace
 
 std::unique_ptr<Script> MakeCavalier()
 {
+    return std::make_unique<CavalierScript>();
+}
+
+void RegisterCavalierTests()
+{
     TestHarness::RegisterSuite("fabled-cavalier",
         [] { return std::make_unique<CavalierTestSuite>(); });
-    return std::make_unique<CavalierScript>();
 }
 } // namespace Fabled

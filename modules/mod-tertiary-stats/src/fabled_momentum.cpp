@@ -35,7 +35,7 @@ public:
 
     void OnKill(Player* player, Runtime& /*runtime*/, Unit* /*victim*/, bool /*xpEligible*/) override
     {
-        Settings const& settings = GetSettings();
+        Settings const& settings = GetSettings(player);
         Aura* aura = player->GetAura(SPELL_MOMENTUM_AURA);
         if (aura)
         {
@@ -75,10 +75,8 @@ public:
             context.Finish();
             return;
         }
-
-        _savedSettings = MutableSettings();
         _settingsSaved = true;
-        Settings& settings = MutableSettings();
+        Settings& settings = TestSettings(_actor);
         settings.momentumPctPerStack = 5.0f;
         settings.momentumMaxStacks = 40;
         settings.momentumWindowMs = 15000;
@@ -226,7 +224,7 @@ private:
     {
         if (_settingsSaved)
         {
-            MutableSettings() = _savedSettings;
+            ClearTestSettings(_actor);
             _settingsSaved = false;
         }
         if (_actor && _equipped)
@@ -238,7 +236,6 @@ private:
     }
 
     Player* _actor = nullptr;
-    Settings _savedSettings;
     ObjectGuid _firstGuid;
     ObjectGuid _secondGuid;
     ObjectGuid _controlledGuid;
@@ -253,8 +250,12 @@ private:
 
 std::unique_ptr<Script> MakeMomentum()
 {
+    return std::make_unique<MomentumScript>();
+}
+
+void RegisterMomentumTests()
+{
     TestHarness::RegisterSuite("fabled-momentum",
         [] { return std::make_unique<MomentumTestSuite>(); });
-    return std::make_unique<MomentumScript>();
 }
 } // namespace Fabled

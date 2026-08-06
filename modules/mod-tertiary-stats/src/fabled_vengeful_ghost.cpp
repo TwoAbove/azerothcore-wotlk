@@ -24,8 +24,8 @@ constexpr TriggerCastFlags FABLED_TRIGGER_FLAGS =
 void RemovePhase(Player* player, Runtime& runtime)
 {
     player->RemoveAurasDueToSpell(SPELL_VENGEFUL_PHASE);
-    runtime.vengefulPhaseActive = false;
-    runtime.vengefulPhaseEndMs = 0;
+    runtime.vengefulGhost.phaseActive = false;
+    runtime.vengefulGhost.phaseEndMs = 0;
 }
 
 void ApplyPhase(Player* player, uint32 phaseMs)
@@ -45,7 +45,7 @@ void ApplyPhase(Player* player, uint32 phaseMs)
 void StartLockout(Player* player)
 {
     player->AddSpellCooldown(SPELL_VENGEFUL_COOLDOWN, 0,
-        GetSettings().vengefulLockoutMs, false);
+        GetSettings(player).vengefulLockoutMs, false);
 }
 
 void DealNativeTestDamage(Creature* attacker, Player* victim)
@@ -85,19 +85,19 @@ class spell_fabled_vengeful_guard final : public AuraScript
                 return;
         }
 
-        if (!runtime->vengefulPhaseActive
+        if (!runtime->vengefulGhost.phaseActive
             && player->HasSpellCooldown(SPELL_VENGEFUL_COOLDOWN))
             return;
 
         uint32 allowedDamage = player->GetHealth() > 1 ? player->GetHealth() - 1 : 0;
         absorbAmount = damageInfo.GetDamage() - allowedDamage;
-        if (runtime->vengefulPhaseActive)
+        if (runtime->vengefulGhost.phaseActive)
             return;
 
-        runtime->vengefulPhaseActive = true;
-        runtime->vengefulPhaseEndMs = Now() + GetSettings().vengefulPhaseMs;
+        runtime->vengefulGhost.phaseActive = true;
+        runtime->vengefulGhost.phaseEndMs = Now() + GetSettings(player).vengefulPhaseMs;
         StartLockout(player);
-        ApplyPhase(player, GetSettings().vengefulPhaseMs);
+        ApplyPhase(player, GetSettings(player).vengefulPhaseMs);
     }
 
     void Register() override
@@ -126,12 +126,12 @@ public:
                 guard->SetMaxDuration(-1);
                 guard->SetDuration(-1);
             }
-            if (!runtime.vengefulPhaseActive && player->IsAlive())
+            if (!runtime.vengefulGhost.phaseActive && player->IsAlive())
             {
                 if (Aura* aura = player->GetAura(SPELL_VENGEFUL_PHASE))
                 {
-                    runtime.vengefulPhaseActive = true;
-                    runtime.vengefulPhaseEndMs = Now()
+                    runtime.vengefulGhost.phaseActive = true;
+                    runtime.vengefulGhost.phaseEndMs = Now()
                         + uint64(std::max<int32>(aura->GetDuration(), 0));
                 }
             }
@@ -139,7 +139,7 @@ public:
         }
 
         player->RemoveAurasDueToSpell(SPELL_VENGEFUL_GUARD);
-        bool phaseActive = runtime.vengefulPhaseActive;
+        bool phaseActive = runtime.vengefulGhost.phaseActive;
         RemovePhase(player, runtime);
         if (phaseActive && player->IsAlive())
             Unit::Kill(player, player);
@@ -147,7 +147,7 @@ public:
 
     void OnUpdate(Player* player, Runtime& runtime, uint32 /*diffMs*/, uint64 nowMs) override
     {
-        if (!runtime.vengefulPhaseActive || nowMs < runtime.vengefulPhaseEndMs)
+        if (!runtime.vengefulGhost.phaseActive || nowMs < runtime.vengefulGhost.phaseEndMs)
             return;
 
         RemovePhase(player, runtime);
@@ -156,12 +156,12 @@ public:
 
     void OnKill(Player* player, Runtime& runtime, Unit* /*victim*/, bool /*xpEligible*/) override
     {
-        if (!runtime.vengefulPhaseActive)
+        if (!runtime.vengefulGhost.phaseActive)
             return;
 
         RemovePhase(player, runtime);
         uint32 restoredHealth = uint32(float(player->GetMaxHealth())
-            * GetSettings().vengefulResHealthPct / 100.0f);
+            * GetSettings(player).vengefulResHealthPct / 100.0f);
         uint32 targetHealth = std::max<uint32>(restoredHealth, 1);
         if (targetHealth > player->GetHealth())
         {
@@ -198,15 +198,14 @@ public:
             return;
         }
 
-        _savedSettings = MutableSettings();
         _settingsSaved = true;
-        MutableSettings().vengefulPhaseMs = 100;
-        MutableSettings().vengefulLockoutMs = 1000;
-        MutableSettings().vengefulResHealthPct = 30.0f;
+        TestSettings(actor).vengefulPhaseMs = 100;
+        TestSettings(actor).vengefulLockoutMs = 1000;
+        TestSettings(actor).vengefulResHealthPct = 30.0f;
 
         Runtime& runtime = GetRuntime(actor);
-        runtime.vengefulPhaseActive = false;
-        runtime.vengefulPhaseEndMs = 0;
+        runtime.vengefulGhost.phaseActive = false;
+        runtime.vengefulGhost.phaseEndMs = 0;
         actor->RemoveSpellCooldown(SPELL_VENGEFUL_COOLDOWN);
         actor->RemoveAurasDueToSpell(SPELL_VENGEFUL_PHASE);
         if (!actor->IsAlive())
@@ -244,12 +243,12 @@ public:
             "health=" + std::to_string(actor->GetHealth()));
         context.Expect(actor->HasAura(SPELL_VENGEFUL_PHASE),
             "Vengeful phase marker debuff is active");
-        context.Expect(runtime.vengefulPhaseActive && runtime.vengefulPhaseEndMs > Now(),
+        context.Expect(runtime.vengefulGhost.phaseActive && runtime.vengefulGhost.phaseEndMs > Now(),
             "Vengeful phase runtime is armed");
-        runtime.vengefulPhaseActive = false;
-        runtime.vengefulPhaseEndMs = 0;
+        runtime.vengefulGhost.phaseActive = false;
+        runtime.vengefulGhost.phaseEndMs = 0;
         SetMask(actor, runtime.mask);
-        context.Expect(runtime.vengefulPhaseActive && runtime.vengefulPhaseEndMs > Now(),
+        context.Expect(runtime.vengefulGhost.phaseActive && runtime.vengefulGhost.phaseEndMs > Now(),
             "persisted phase aura reconstructs Vengeful runtime after a login-style refresh");
 
         TestHarness::Event const* firstFinalDamage = context.FindEvent(
@@ -261,7 +260,7 @@ public:
 
 
         uint32 expectedRestoredHealth = uint32(float(actor->GetMaxHealth())
-            * MutableSettings().vengefulResHealthPct / 100.0f);
+            * TestSettings(actor).vengefulResHealthPct / 100.0f);
         bool killed = context.Damage(_firstDummyGuid, firstDummy->GetHealth());
         context.Expect(killed, "actor kills the first dummy during the phase");
         context.Expect(actor->IsAlive() && actor->GetHealth() == expectedRestoredHealth,
@@ -269,7 +268,7 @@ public:
             "health=" + std::to_string(actor->GetHealth())
                 + " expected=" + std::to_string(expectedRestoredHealth));
         context.Expect(!actor->HasAura(SPELL_VENGEFUL_PHASE)
-                && !runtime.vengefulPhaseActive && runtime.vengefulPhaseEndMs == 0,
+                && !runtime.vengefulGhost.phaseActive && runtime.vengefulGhost.phaseEndMs == 0,
             "phase kill clears the marker and active state");
         context.Expect(actor->HasSpellCooldown(SPELL_VENGEFUL_COOLDOWN),
             "phase activation starts the native persisted lockout");
@@ -290,10 +289,10 @@ public:
 
         DealNativeTestDamage(secondDummy, actor);
         context.Expect(actor->IsAlive() && actor->GetHealth() == 1
-                && runtime.vengefulPhaseActive && actor->HasAura(SPELL_VENGEFUL_PHASE),
+                && runtime.vengefulGhost.phaseActive && actor->HasAura(SPELL_VENGEFUL_PHASE),
             "Vengeful phase retriggers after its lockout");
 
-        AdvanceClock(actor, uint64(MutableSettings().vengefulPhaseMs) + 1);
+        AdvanceClock(actor, uint64(TestSettings(actor).vengefulPhaseMs) + 1);
         _stage = Stage::AwaitExpiry;
     }
 
@@ -315,7 +314,7 @@ public:
 
         Runtime& runtime = GetRuntime(actor);
         context.Expect(!actor->IsAlive(), "expired Vengeful phase kills the actor for real");
-        context.Expect(!runtime.vengefulPhaseActive && runtime.vengefulPhaseEndMs == 0
+        context.Expect(!runtime.vengefulGhost.phaseActive && runtime.vengefulGhost.phaseEndMs == 0
                 && !actor->HasAura(SPELL_VENGEFUL_PHASE),
             "phase expiry clears its marker and active state");
         context.Expect(actor->HasSpellCooldown(SPELL_VENGEFUL_COOLDOWN),
@@ -359,7 +358,7 @@ private:
 
         if (_settingsSaved)
         {
-            MutableSettings() = _savedSettings;
+            ClearTestSettings(context.GetActor());
             _settingsSaved = false;
         }
         context.DespawnAllDummies();
@@ -373,7 +372,6 @@ private:
     }
 
     Stage _stage = Stage::Done;
-    Settings _savedSettings;
     ObjectGuid _firstDummyGuid;
     ObjectGuid _secondDummyGuid;
     bool _settingsSaved = false;
@@ -388,8 +386,12 @@ void RegisterVengefulGhostSpellScripts()
 
 std::unique_ptr<Script> MakeVengefulGhost()
 {
+    return std::make_unique<VengefulGhostScript>();
+}
+
+void RegisterVengefulGhostTests()
+{
     TestHarness::RegisterSuite("fabled-vengeful-ghost",
         [] { return std::make_unique<VengefulGhostTestSuite>(); });
-    return std::make_unique<VengefulGhostScript>();
 }
 } // namespace Fabled

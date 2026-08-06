@@ -37,8 +37,6 @@ class WarcasterTestSuite final : public TestHarness::Suite
 public:
     void Start(TestHarness::Context& context) override
     {
-        _savedSettings = GetSettings();
-        _settingsSaved = true;
 
         Player* actor = context.GetActor();
         context.Expect(actor != nullptr, "headless actor available");
@@ -283,9 +281,6 @@ private:
             return;
         _cleaned = true;
 
-        if (_settingsSaved)
-            MutableSettings() = _savedSettings;
-
         if (Player* actor = context.GetActor())
         {
             Test::SetMoving(actor, false);
@@ -308,12 +303,10 @@ private:
     }
 
     Stage _stage = Stage::Done;
-    Settings _savedSettings;
     ObjectGuid _actorGuid;
     ObjectGuid _dummyGuid;
     uint32 _elapsed = 0;
     uint32 _castTimeoutMs = 3000;
-    bool _settingsSaved = false;
     bool _hadCastSpell = false;
     bool _hadChannelSpell = false;
     bool _equipped = false;
@@ -323,8 +316,12 @@ private:
 
 std::unique_ptr<Script> MakeWarcaster()
 {
+    return std::make_unique<WarcasterScript>();
+}
+
+void RegisterWarcasterTests()
+{
     TestHarness::RegisterSuite("fabled-warcaster",
         [] { return std::make_unique<WarcasterTestSuite>(); });
-    return std::make_unique<WarcasterScript>();
 }
 } // namespace Fabled

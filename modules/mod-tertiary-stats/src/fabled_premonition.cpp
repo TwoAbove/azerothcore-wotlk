@@ -46,7 +46,7 @@ public:
         player->CastCustomSpell(SPELL_PREMONITION_AURA, values, player, FABLED_TRIGGER_FLAGS);
         if (Aura* aura = player->GetAura(SPELL_PREMONITION_AURA))
         {
-            int32 duration = int32(GetSettings().premonitionWindowMs);
+            int32 duration = int32(GetSettings(player).premonitionWindowMs);
             aura->SetMaxDuration(duration);
             aura->SetDuration(duration);
         }
@@ -65,10 +65,8 @@ public:
             Finish(context);
             return;
         }
-
-        _savedSettings = GetSettings();
         _settingsSaved = true;
-        MutableSettings().premonitionWindowMs = TEST_WINDOW_MS;
+        TestSettings(actor).premonitionWindowMs = TEST_WINDOW_MS;
 
         context.Expect(IsReady(), "fabled custom spells are ready");
         if (!IsReady())
@@ -187,14 +185,13 @@ private:
         _equipped = false;
 
         if (_settingsSaved)
-            MutableSettings() = _savedSettings;
+            ClearTestSettings(context.GetActor());
         _settingsSaved = false;
 
         context.DespawnAllDummies();
         context.Finish();
     }
 
-    Settings _savedSettings;
     bool _settingsSaved = false;
     bool _equipped = false;
 };
@@ -202,8 +199,12 @@ private:
 
 std::unique_ptr<Script> MakePremonition()
 {
+    return std::make_unique<PremonitionScript>();
+}
+
+void RegisterPremonitionTests()
+{
     TestHarness::RegisterSuite("fabled-premonition",
         [] { return std::make_unique<PremonitionTestSuite>(); });
-    return std::make_unique<PremonitionScript>();
 }
 } // namespace Fabled

@@ -28,7 +28,7 @@ constexpr TriggerCastFlags FABLED_TRIGGER_FLAGS =
 void BreakFade(Player* player, Runtime& runtime)
 {
     player->RemoveAurasDueToSpell(SPELL_GHOSTWALK_AURA);
-    runtime.ghostwalkFadeAtMs = 0;
+    runtime.ghostwalk.fadeAtMs = 0;
 }
 
 void ApplyFade(Player* player)
@@ -37,7 +37,7 @@ void ApplyFade(Player* player)
         return;
 
     CustomSpellValues values;
-    values.AddSpellMod(SPELLVALUE_BASE_POINT0, int32(std::lround(GetSettings().ghostwalkSpeedPct)));
+    values.AddSpellMod(SPELLVALUE_BASE_POINT0, int32(std::lround(GetSettings(player).ghostwalkSpeedPct)));
     values.AddSpellMod(SPELLVALUE_BASE_POINT1, int32(player->GetLevel()) * 5);
     player->CastCustomSpell(SPELL_GHOSTWALK_AURA, values, player, FABLED_TRIGGER_FLAGS);
 
@@ -72,20 +72,20 @@ public:
 
         if (player->HasAura(SPELL_GHOSTWALK_AURA))
         {
-            runtime.ghostwalkFadeAtMs = 0;
+            runtime.ghostwalk.fadeAtMs = 0;
             return;
         }
 
-        if (!runtime.ghostwalkFadeAtMs)
+        if (!runtime.ghostwalk.fadeAtMs)
         {
-            runtime.ghostwalkFadeAtMs = nowMs + GetSettings().ghostwalkDelayMs;
+            runtime.ghostwalk.fadeAtMs = nowMs + GetSettings(player).ghostwalkDelayMs;
             return;
         }
 
-        if (nowMs < runtime.ghostwalkFadeAtMs)
+        if (nowMs < runtime.ghostwalk.fadeAtMs)
             return;
 
-        runtime.ghostwalkFadeAtMs = 0;
+        runtime.ghostwalk.fadeAtMs = 0;
         ApplyFade(player);
     }
 
@@ -125,11 +125,9 @@ public:
             context.Finish();
             return;
         }
-
-        _savedSettings = MutableSettings();
         _settingsSaved = true;
-        MutableSettings().ghostwalkDelayMs = 6000;
-        MutableSettings().ghostwalkSpeedPct = 40.0f;
+        TestSettings(actor).ghostwalkDelayMs = 6000;
+        TestSettings(actor).ghostwalkSpeedPct = 40.0f;
 
         context.DespawnAllDummies();
         Test::UnequipFabled(actor, Effect::Ghostwalk);
@@ -146,9 +144,9 @@ public:
             "Ghostwalk does not fade immediately after equip");
 
         HandleUpdate(actor, 0);
-        context.Expect(GetRuntime(actor).ghostwalkFadeAtMs != 0,
+        context.Expect(GetRuntime(actor).ghostwalk.fadeAtMs != 0,
             "Ghostwalk arms its out-of-combat fade deadline");
-        AdvanceClock(actor, GetSettings().ghostwalkDelayMs + 1);
+        AdvanceClock(actor, GetSettings(actor).ghostwalkDelayMs + 1);
         _stage = Stage::AwaitFirstFade;
         _elapsedMs = 0;
     }
@@ -198,14 +196,14 @@ public:
             HandleUpdate(actor, 0);
             context.Expect(!actor->HasAura(SPELL_GHOSTWALK_AURA),
                 "entering combat breaks Ghostwalk");
-            context.Expect(GetRuntime(actor).ghostwalkFadeAtMs == 0,
+            context.Expect(GetRuntime(actor).ghostwalk.fadeAtMs == 0,
                 "combat break clears the fade deadline");
 
             context.DespawnAllDummies();
             HandleUpdate(actor, 0);
-            context.Expect(GetRuntime(actor).ghostwalkFadeAtMs != 0,
+            context.Expect(GetRuntime(actor).ghostwalk.fadeAtMs != 0,
                 "leaving combat re-arms Ghostwalk");
-            AdvanceClock(actor, GetSettings().ghostwalkDelayMs + 1);
+            AdvanceClock(actor, GetSettings(actor).ghostwalkDelayMs + 1);
             _stage = Stage::AwaitRefade;
             _elapsedMs = 0;
             return;
@@ -226,7 +224,7 @@ public:
         }
         Unit::Kill(actor, actor);
         context.Expect(!actor->HasAura(SPELL_GHOSTWALK_AURA)
-                && GetRuntime(actor).ghostwalkFadeAtMs == 0,
+                && GetRuntime(actor).ghostwalk.fadeAtMs == 0,
             "death clears Ghostwalk and its pending lifecycle");
         HandleUpdate(actor, 0);
         context.Expect(!actor->HasAura(SPELL_GHOSTWALK_AURA),
@@ -235,7 +233,7 @@ public:
         actor->SpawnCorpseBones();
         HandleUpdate(actor, 0);
         context.Expect(!actor->HasAura(SPELL_GHOSTWALK_AURA)
-                && GetRuntime(actor).ghostwalkFadeAtMs != 0,
+                && GetRuntime(actor).ghostwalk.fadeAtMs != 0,
             "resurrection starts a fresh Ghostwalk fade delay");
         Finish(context);
     }
@@ -266,7 +264,7 @@ private:
         _equipped = false;
 
         if (_settingsSaved)
-            MutableSettings() = _savedSettings;
+            ClearTestSettings(context.GetActor());
         _settingsSaved = false;
     }
 
@@ -278,7 +276,6 @@ private:
     }
 
     Stage _stage = Stage::Done;
-    Settings _savedSettings;
     bool _settingsSaved = false;
     bool _equipped = false;
     float _baseRunSpeed = 1.0f;
@@ -288,8 +285,12 @@ private:
 
 std::unique_ptr<Script> MakeGhostwalk()
 {
+    return std::make_unique<GhostwalkScript>();
+}
+
+void RegisterGhostwalkTests()
+{
     TestHarness::RegisterSuite("fabled-ghostwalk",
         [] { return std::make_unique<GhostwalkTestSuite>(); });
-    return std::make_unique<GhostwalkScript>();
 }
 } // namespace Fabled

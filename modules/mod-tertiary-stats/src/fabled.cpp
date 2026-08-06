@@ -13,60 +13,59 @@
 #include "SpellMgr.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <limits>
 
 namespace Fabled
 {
-void LoadKeeperExtraSpells(std::string const& csv);
-
 namespace
 {
 constexpr char RUNTIME_KEY[] = "mod-tertiary-fabled";
 
-constexpr std::array<char const*, EFFECT_COUNT> EFFECT_NAMES = {
-    "Impact", "Premonition", "Momentum", "Ghostwalk", "Cavalier", "Keeper",
-    "Vengeful Ghost", "Crossfire", "Alchemist's Gut", "Leviathan's Gift",
-    "Overkill", "Blood Magic", "Warcaster", "Indomitable"
+using Factory = std::unique_ptr<Script> (*)();
+using TestRegistrar = void (*)();
+
+struct EffectDescriptor
+{
+    Effect effect;
+    char const* name;
+    Anchor anchor;
+    Factory factory;
+    TestRegistrar registerTests;
 };
+
+constexpr std::array<EffectDescriptor, EFFECT_COUNT> EFFECTS = {{
+    { Effect::Impact, "Impact", Anchor::Feet, MakeImpact, RegisterImpactTests },
+    { Effect::Premonition, "Premonition", Anchor::Trinket, MakePremonition, RegisterPremonitionTests },
+    { Effect::Momentum, "Momentum", Anchor::Finger, MakeMomentum, RegisterMomentumTests },
+    { Effect::Ghostwalk, "Ghostwalk", Anchor::Back, MakeGhostwalk, RegisterGhostwalkTests },
+    { Effect::Cavalier, "Cavalier", Anchor::Legs, MakeCavalier, RegisterCavalierTests },
+    { Effect::Keeper, "Keeper", Anchor::Chest, MakeKeeper, RegisterKeeperTests },
+    { Effect::VengefulGhost, "Vengeful Ghost", Anchor::Trinket, MakeVengefulGhost, RegisterVengefulGhostTests },
+    { Effect::Crossfire, "Crossfire", Anchor::Finger, MakeCrossfire, RegisterCrossfireTests },
+    { Effect::AlchemistsGut, "Alchemist's Gut", Anchor::Trinket, MakeAlchemistsGut, RegisterAlchemistsGutTests },
+    { Effect::LeviathansGift, "Leviathan's Gift", Anchor::Head, MakeLeviathansGift, RegisterLeviathansGiftTests },
+    { Effect::Overkill, "Overkill", Anchor::Weapon, MakeOverkill, RegisterOverkillTests },
+    { Effect::BloodMagic, "Blood Magic", Anchor::Finger, MakeBloodMagic, RegisterBloodMagicTests },
+    { Effect::Warcaster, "Warcaster", Anchor::Finger, MakeWarcaster, RegisterWarcasterTests },
+    { Effect::Indomitable, "Indomitable", Anchor::Trinket, MakeIndomitable, RegisterIndomitableTests }
+}};
 
 Settings _settings;
 bool _ready = false;
 bool _spellsValidated = false;
-constexpr std::array<Effect, 1> HEAD_EFFECTS = { Effect::LeviathansGift };
-constexpr std::array<Effect, 1> CHEST_EFFECTS = { Effect::Keeper };
-constexpr std::array<Effect, 1> LEGS_EFFECTS = { Effect::Cavalier };
-constexpr std::array<Effect, 1> FEET_EFFECTS = { Effect::Impact };
-constexpr std::array<Effect, 1> BACK_EFFECTS = { Effect::Ghostwalk };
-constexpr std::array<Effect, 4> FINGER_EFFECTS = {
-    Effect::Crossfire, Effect::Momentum, Effect::Warcaster, Effect::BloodMagic
-};
-constexpr std::array<Effect, 4> TRINKET_EFFECTS = {
-    Effect::Premonition, Effect::VengefulGhost, Effect::AlchemistsGut, Effect::Indomitable
-};
-constexpr std::array<Effect, 1> WEAPON_EFFECTS = { Effect::Overkill };
-
 
 std::array<std::unique_ptr<Script>, EFFECT_COUNT>& Scripts()
 {
-    static std::array<std::unique_ptr<Script>, EFFECT_COUNT> scripts = [] {
-        std::array<std::unique_ptr<Script>, EFFECT_COUNT> made;
-        made[uint8(Effect::Impact) - 1] = MakeImpact();
-        made[uint8(Effect::Premonition) - 1] = MakePremonition();
-        made[uint8(Effect::Momentum) - 1] = MakeMomentum();
-        made[uint8(Effect::Ghostwalk) - 1] = MakeGhostwalk();
-        made[uint8(Effect::Cavalier) - 1] = MakeCavalier();
-        made[uint8(Effect::Keeper) - 1] = MakeKeeper();
-        made[uint8(Effect::VengefulGhost) - 1] = MakeVengefulGhost();
-        made[uint8(Effect::Crossfire) - 1] = MakeCrossfire();
-        made[uint8(Effect::AlchemistsGut) - 1] = MakeAlchemistsGut();
-        made[uint8(Effect::LeviathansGift) - 1] = MakeLeviathansGift();
-        made[uint8(Effect::Overkill) - 1] = MakeOverkill();
-        made[uint8(Effect::BloodMagic) - 1] = MakeBloodMagic();
-        made[uint8(Effect::Warcaster) - 1] = MakeWarcaster();
-        made[uint8(Effect::Indomitable) - 1] = MakeIndomitable();
-        return made;
-    }();
+    static std::array<std::unique_ptr<Script>, EFFECT_COUNT> scripts;
     return scripts;
+}
+
+EffectDescriptor const* DescriptorFor(Effect effect)
+{
+    if (effect == Effect::None || effect >= Effect::Max)
+        return nullptr;
+    return &EFFECTS[uint8(effect) - 1];
 }
 
 template <typename Fn>
@@ -102,44 +101,14 @@ Effect EffectFromBonusId(uint16 bonusId)
 
 char const* Name(Effect effect)
 {
-    if (effect == Effect::None || effect >= Effect::Max)
-        return "Unknown";
-    return EFFECT_NAMES[uint8(effect) - 1];
+    EffectDescriptor const* descriptor = DescriptorFor(effect);
+    return descriptor ? descriptor->name : "Unknown";
 }
+
 Anchor AnchorFor(Effect effect)
 {
-    switch (effect)
-    {
-        case Effect::Impact:
-            return Anchor::Feet;
-        case Effect::Premonition:
-            return Anchor::Trinket;
-        case Effect::Momentum:
-            return Anchor::Finger;
-        case Effect::Ghostwalk:
-            return Anchor::Back;
-        case Effect::Cavalier:
-            return Anchor::Legs;
-        case Effect::Keeper:
-            return Anchor::Chest;
-        case Effect::VengefulGhost:
-            return Anchor::Trinket;
-        case Effect::Crossfire:
-            return Anchor::Finger;
-        case Effect::AlchemistsGut:
-            return Anchor::Trinket;
-        case Effect::LeviathansGift:
-            return Anchor::Head;
-        case Effect::Overkill:
-            return Anchor::Weapon;
-        case Effect::BloodMagic:
-        case Effect::Warcaster:
-            return Anchor::Finger;
-        case Effect::Indomitable:
-            return Anchor::Trinket;
-        default:
-            return Anchor::None;
-    }
+    EffectDescriptor const* descriptor = DescriptorFor(effect);
+    return descriptor ? descriptor->anchor : Anchor::None;
 }
 
 Anchor AnchorFor(ItemTemplate const* itemTemplate)
@@ -189,27 +158,18 @@ Anchor AnchorFor(ItemTemplate const* itemTemplate)
 
 std::span<Effect const> EffectPoolFor(Anchor anchor)
 {
-    switch (anchor)
+    using Pools = std::array<std::vector<Effect>, uint8(Anchor::Max)>;
+    static Pools const pools = []
     {
-        case Anchor::Head:
-            return HEAD_EFFECTS;
-        case Anchor::Chest:
-            return CHEST_EFFECTS;
-        case Anchor::Legs:
-            return LEGS_EFFECTS;
-        case Anchor::Feet:
-            return FEET_EFFECTS;
-        case Anchor::Back:
-            return BACK_EFFECTS;
-        case Anchor::Finger:
-            return FINGER_EFFECTS;
-        case Anchor::Trinket:
-            return TRINKET_EFFECTS;
-        case Anchor::Weapon:
-            return WEAPON_EFFECTS;
-        default:
-            return {};
-    }
+        Pools result;
+        for (EffectDescriptor const& descriptor : EFFECTS)
+            result[uint8(descriptor.anchor)].push_back(descriptor.effect);
+        return result;
+    }();
+
+    if (anchor >= Anchor::Max)
+        return {};
+    return pools[uint8(anchor)];
 }
 
 std::span<Effect const> EffectPoolFor(ItemTemplate const* itemTemplate)
@@ -263,22 +223,64 @@ Settings const& GetSettings()
     return _settings;
 }
 
-Settings& MutableSettings()
+Settings const& GetSettings(Player const* player)
 {
-    return _settings;
+    Runtime const* runtime = player
+        ? player->CustomData.Get<Runtime>(RUNTIME_KEY) : nullptr;
+    return runtime && runtime->testSettings ? *runtime->testSettings : _settings;
+}
+
+Settings& TestSettings(Player* player)
+{
+    Runtime& runtime = GetRuntime(player);
+    if (!runtime.testSettings)
+        runtime.testSettings = std::make_unique<Settings>(_settings);
+    return *runtime.testSettings;
+}
+
+void ClearTestSettings(Player* player)
+{
+    if (Runtime* runtime = FindRuntime(player))
+        runtime->testSettings.reset();
 }
 
 void Runtime::Advance(uint64 ms)
 {
-    AdvanceDeadline(ghostwalkFadeAtMs, ms);
-    AdvanceDeadline(vengefulPhaseEndMs, ms);
-    AdvanceDeadline(overkillExpiresMs, ms);
+    AdvanceDeadline(ghostwalk.fadeAtMs, ms);
+    AdvanceDeadline(vengefulGhost.phaseEndMs, ms);
+    AdvanceDeadline(overkill.expiresMs, ms);
 }
 
 bool Has(Runtime const& runtime, Effect effect)
 {
     return effect != Effect::None && effect < Effect::Max
         && (runtime.mask & EffectBit(effect));
+}
+
+void RegisterScripts()
+{
+    auto& scripts = Scripts();
+    for (uint8 index = 0; index < EFFECT_COUNT; ++index)
+    {
+        EffectDescriptor const& descriptor = EFFECTS[index];
+        if (uint8(descriptor.effect) != index + 1)
+        {
+            LOG_FATAL("module", "TertiaryStats: invalid Fabled descriptor order at index {}", index);
+            std::abort();
+        }
+        scripts[index] = descriptor.factory();
+        if (!scripts[index] || scripts[index]->GetEffect() != descriptor.effect)
+        {
+            LOG_FATAL("module", "TertiaryStats: factory mismatch for {}", descriptor.name);
+            std::abort();
+        }
+    }
+}
+
+void RegisterTests()
+{
+    for (EffectDescriptor const& descriptor : EFFECTS)
+        descriptor.registerTests();
 }
 
 void LoadSettings()
@@ -315,7 +317,6 @@ void LoadSettings()
     _settings.ghostwalkSpeedPct = std::max(0.0f, sConfigMgr->GetOption<float>("TertiaryStats.Fabled.Ghostwalk.SpeedPct", 40.0f));
 
     _settings.keeperExtraSpells = sConfigMgr->GetOption<std::string>("TertiaryStats.Fabled.Keeper.ExtraSpells", "");
-    LoadKeeperExtraSpells(_settings.keeperExtraSpells);
 
     _settings.vengefulPhaseMs = sConfigMgr->GetOption<uint32>("TertiaryStats.Fabled.VengefulGhost.PhaseMs", 10000);
     _settings.vengefulLockoutMs = sConfigMgr->GetOption<uint32>("TertiaryStats.Fabled.VengefulGhost.LockoutMs", 600000);
@@ -342,8 +343,6 @@ bool ValidateSpells()
     if (_spellsValidated)
         return _ready;
     _spellsValidated = true;
-
-    Scripts(); // construct effect scripts; factories register their test suites
 
     _ready = true;
     for (uint32 spellId = SPELL_FIRST; spellId <= SPELL_LAST; ++spellId)

@@ -26,16 +26,16 @@ constexpr uint32 TEST_TIMEOUT_MS = 4000;
 
 void ClearBank(Runtime& runtime)
 {
-    runtime.overkillBank = 0;
-    runtime.overkillExpiresMs = 0;
-    runtime.overkillSchoolMask = SPELL_SCHOOL_MASK_NONE;
+    runtime.overkill.bank = 0;
+    runtime.overkill.expiresMs = 0;
+    runtime.overkill.schoolMask = SPELL_SCHOOL_MASK_NONE;
 }
 
 void ClearPending(Runtime& runtime)
 {
-    runtime.overkillPendingTarget.Clear();
-    runtime.overkillPendingDamage = 0;
-    runtime.overkillPendingSchoolMask = SPELL_SCHOOL_MASK_NONE;
+    runtime.overkill.pendingTarget.Clear();
+    runtime.overkill.pendingDamage = 0;
+    runtime.overkill.pendingSchoolMask = SPELL_SCHOOL_MASK_NONE;
 }
 void CastTestDamage(Player* player, Unit* target)
 {
@@ -59,15 +59,15 @@ public:
 
     void OnUpdate(Player* player, Runtime& runtime, uint32 /*diffMs*/, uint64 nowMs) override
     {
-        if (runtime.overkillBank && runtime.overkillExpiresMs && nowMs >= runtime.overkillExpiresMs)
+        if (runtime.overkill.bank && runtime.overkill.expiresMs && nowMs >= runtime.overkill.expiresMs)
             ClearBank(runtime);
 
-        if (!runtime.overkillPendingDamage)
+        if (!runtime.overkill.pendingDamage)
             return;
 
-        ObjectGuid targetGuid = runtime.overkillPendingTarget;
-        uint64 damage = runtime.overkillPendingDamage;
-        SpellSchoolMask schoolMask = runtime.overkillPendingSchoolMask;
+        ObjectGuid targetGuid = runtime.overkill.pendingTarget;
+        uint64 damage = runtime.overkill.pendingDamage;
+        SpellSchoolMask schoolMask = runtime.overkill.pendingSchoolMask;
         ClearPending(runtime);
         if (Unit* target = ObjectAccessor::GetUnit(*player, targetGuid);
             target && target->IsAlive())
@@ -79,14 +79,14 @@ public:
     void OnBeforeDealtDamage(Player* /*player*/, Runtime& runtime, Unit* victim,
         uint32 /*damage*/, SpellInfo const* /*spellInfo*/, DamageKind kind) override
     {
-        if (kind == DamageKind::Periodic || !runtime.overkillBank
-            || !runtime.overkillExpiresMs || Now() >= runtime.overkillExpiresMs
+        if (kind == DamageKind::Periodic || !runtime.overkill.bank
+            || !runtime.overkill.expiresMs || Now() >= runtime.overkill.expiresMs
             || !victim || !victim->IsAlive())
             return;
 
-        runtime.overkillPendingTarget = victim->GetGUID();
-        runtime.overkillPendingDamage = runtime.overkillBank;
-        runtime.overkillPendingSchoolMask = runtime.overkillSchoolMask;
+        runtime.overkill.pendingTarget = victim->GetGUID();
+        runtime.overkill.pendingDamage = runtime.overkill.bank;
+        runtime.overkill.pendingSchoolMask = runtime.overkill.schoolMask;
         ClearBank(runtime);
     }
     void OnDealtDamageFinal(Player* player, Runtime& runtime, Unit* victim, uint32 damage,
@@ -99,9 +99,9 @@ public:
         if (!health || damage <= health || !player->isHonorOrXPTarget(victim))
             return;
 
-        runtime.overkillBank = uint64(damage) - health;
-        runtime.overkillExpiresMs = Now() + GetSettings().overkillWindowMs;
-        runtime.overkillSchoolMask = spellInfo
+        runtime.overkill.bank = uint64(damage) - health;
+        runtime.overkill.expiresMs = Now() + GetSettings(player).overkillWindowMs;
+        runtime.overkill.schoolMask = spellInfo
             ? spellInfo->GetSchoolMask() : SPELL_SCHOOL_MASK_NORMAL;
     }
 };
@@ -119,10 +119,8 @@ public:
             Finish(context);
             return;
         }
-
-        _savedSettings = GetSettings();
         _settingsSaved = true;
-        MutableSettings().overkillWindowMs = 1000;
+        TestSettings(actor).overkillWindowMs = 1000;
 
         Test::UnequipFabled(actor, Effect::Overkill);
         _equipped = Test::EquipFabledTrinket(actor, Effect::Overkill) != nullptr;
@@ -307,30 +305,30 @@ private:
         uint32 killingDamage = killingBlow ? uint32(killingBlow->amount) : 0;
         _expectedBank = killingDamage > _killHealth ? uint64(killingDamage - _killHealth) : 0;
         Runtime& runtime = GetRuntime(actor);
-        context.Expect(runtime.overkillBank == _expectedBank && runtime.overkillExpiresMs > Now()
-                && runtime.overkillSchoolMask == SPELL_SCHOOL_MASK_FIRE,
+        context.Expect(runtime.overkill.bank == _expectedBank && runtime.overkill.expiresMs > Now()
+                && runtime.overkill.schoolMask == SPELL_SCHOOL_MASK_FIRE,
             "excess killing-blow damage banks its amount and original school",
-            "bank=" + std::to_string(runtime.overkillBank)
+            "bank=" + std::to_string(runtime.overkill.bank)
                 + ",expected=" + std::to_string(_expectedBank)
-                + ",school=" + std::to_string(uint32(runtime.overkillSchoolMask)));
+                + ",school=" + std::to_string(uint32(runtime.overkill.schoolMask)));
 
         Creature* spendTarget = RequireTarget(context, _spendGuid, "bank-spend target remains available");
-        if (!spendTarget || runtime.overkillBank != _expectedBank)
+        if (!spendTarget || runtime.overkill.bank != _expectedBank)
         {
             Finish(context);
             return;
         }
         uint32 unresolvedDamage = _baseDamage;
-        uint64 deadlineBeforeUnresolved = runtime.overkillExpiresMs;
+        uint64 deadlineBeforeUnresolved = runtime.overkill.expiresMs;
         sScriptMgr->ModifyMeleeDamage(spendTarget, actor, unresolvedDamage);
         context.Expect(unresolvedDamage == _baseDamage
-                && runtime.overkillBank == _expectedBank
-                && runtime.overkillExpiresMs == deadlineBeforeUnresolved,
+                && runtime.overkill.bank == _expectedBank
+                && runtime.overkill.expiresMs == deadlineBeforeUnresolved,
             "an unresolved melee swing neither spends nor applies the bank");
-        if (runtime.overkillBank != _expectedBank)
+        if (runtime.overkill.bank != _expectedBank)
         {
-            runtime.overkillBank = _expectedBank;
-            runtime.overkillExpiresMs = deadlineBeforeUnresolved;
+            runtime.overkill.bank = _expectedBank;
+            runtime.overkill.expiresMs = deadlineBeforeUnresolved;
         }
 
 
@@ -360,8 +358,8 @@ private:
             "delta=" + std::to_string(healthDelta)
                 + ",direct=" + std::to_string(directDamage)
                 + ",bank=" + std::to_string(_expectedBank));
-        context.Expect(runtime.overkillBank == 0 && runtime.overkillExpiresMs == 0
-                && runtime.overkillPendingDamage == 0
+        context.Expect(runtime.overkill.bank == 0 && runtime.overkill.expiresMs == 0
+                && runtime.overkill.pendingDamage == 0
                 && context.FindEvent(TestHarness::EventType::DamageFinal, actor->GetGUID(),
                     _spendGuid, SPELL_OVERKILL_DAMAGE),
             "spending the bank resolves the tagged Overkill damage event");
@@ -388,23 +386,23 @@ private:
         uint32 killingDamage = killingBlow ? uint32(killingBlow->amount) : 0;
         _expectedBank = killingDamage > _killHealth ? uint64(killingDamage - _killHealth) : 0;
         Runtime& runtime = GetRuntime(actor);
-        context.Expect(runtime.overkillBank == _expectedBank,
+        context.Expect(runtime.overkill.bank == _expectedBank,
             "a later XP-eligible overkill re-banks its excess",
-            "bank=" + std::to_string(runtime.overkillBank));
-        if (runtime.overkillBank != _expectedBank)
+            "bank=" + std::to_string(runtime.overkill.bank));
+        if (runtime.overkill.bank != _expectedBank)
         {
             Finish(context);
             return;
         }
 
-        AdvanceClock(actor, GetSettings().overkillWindowMs + 1);
+        AdvanceClock(actor, GetSettings(actor).overkillWindowMs + 1);
         SetStage(Stage::AwaitExpiry);
     }
 
     void CheckExpiry(TestHarness::Context& context, Player* actor)
     {
         Runtime& runtime = GetRuntime(actor);
-        context.Expect(runtime.overkillBank == 0 && runtime.overkillExpiresMs == 0,
+        context.Expect(runtime.overkill.bank == 0 && runtime.overkill.expiresMs == 0,
             "bank expires after its window on the next player tick");
 
         Creature* greyTarget = RequireTarget(context, _greyGuid, "grey kill target remains available");
@@ -427,7 +425,7 @@ private:
     void CheckGreyKill(TestHarness::Context& context, Player* actor)
     {
         Runtime& runtime = GetRuntime(actor);
-        context.Expect(runtime.overkillBank == 0 && runtime.overkillExpiresMs == 0,
+        context.Expect(runtime.overkill.bank == 0 && runtime.overkill.expiresMs == 0,
             "grey-mob killing blow banks no excess damage");
         Finish(context);
     }
@@ -436,7 +434,7 @@ private:
     {
         if (_settingsSaved)
         {
-            MutableSettings() = _savedSettings;
+            ClearTestSettings(context.GetActor());
             _settingsSaved = false;
         }
 
@@ -451,7 +449,6 @@ private:
             context.Finish();
     }
 
-    Settings _savedSettings;
     bool _settingsSaved = false;
     bool _equipped = false;
     Stage _stage = Stage::Done;
@@ -470,8 +467,12 @@ private:
 
 std::unique_ptr<Script> MakeOverkill()
 {
+    return std::make_unique<OverkillScript>();
+}
+
+void RegisterOverkillTests()
+{
     TestHarness::RegisterSuite("fabled-overkill",
         [] { return std::make_unique<OverkillTestSuite>(); });
-    return std::make_unique<OverkillScript>();
 }
 } // namespace Fabled

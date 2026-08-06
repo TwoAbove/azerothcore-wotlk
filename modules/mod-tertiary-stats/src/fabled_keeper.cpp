@@ -21,8 +21,6 @@
 
 namespace Fabled
 {
-void LoadKeeperExtraSpells(std::string const& csv);
-
 namespace
 {
 constexpr SpellGroup SPELL_GROUP_ELIXIR_UNSTABLE_FLASKS = static_cast<SpellGroup>(3);
@@ -30,8 +28,6 @@ constexpr SpellGroup SPELL_GROUP_WELL_FED = static_cast<SpellGroup>(1001);
 constexpr int32 MIN_WELL_FED_DURATION_MS = 60000;
 constexpr uint32 TEST_ELIXIR_SPELL = 3593; // Elixir of Fortitude, guardian elixir group.
 constexpr uint32 TEST_EXTRA_SPELL = 1243;  // Power Word: Fortitude, normally not kept.
-std::shared_ptr<std::unordered_set<uint32> const> _extraSpells =
-    std::make_shared<std::unordered_set<uint32> const>();
 
 std::unordered_set<uint32> ParseExtraSpells(std::string const& csv)
 {
@@ -119,17 +115,17 @@ void TrackAura(Player* player, Runtime& runtime, Aura* aura)
     if (!application)
         return;
 
-    std::shared_ptr<std::unordered_set<uint32> const> extraSpells =
-        std::atomic_load(&_extraSpells);
+    std::unordered_set<uint32> const extraSpells =
+        ParseExtraSpells(GetSettings(player).keeperExtraSpells);
     uint32 spellId = aura->GetId();
-    bool extraSpell = extraSpells->find(spellId) != extraSpells->end();
+    bool extraSpell = extraSpells.find(spellId) != extraSpells.end();
     if (!extraSpell && !IsElixirOrFlask(spellId) && !IsWellFedOrScroll(application))
         return;
 
-    auto managed = std::find_if(runtime.keeperManaged.begin(), runtime.keeperManaged.end(),
+    auto managed = std::find_if(runtime.keeper.managed.begin(), runtime.keeper.managed.end(),
         [aura](KeeperAuraState const& state) { return state.aura == aura; });
-    if (managed == runtime.keeperManaged.end())
-        runtime.keeperManaged.push_back({ aura, aura->GetMaxDuration() });
+    if (managed == runtime.keeper.managed.end())
+        runtime.keeper.managed.push_back({ aura, aura->GetMaxDuration() });
     else
         managed->maxDuration = aura->GetMaxDuration();
 }
@@ -148,13 +144,13 @@ void TrackAppliedAuras(Player* player, Runtime& runtime)
 
 void ForgetAura(Runtime& runtime, Aura const* aura)
 {
-    std::erase_if(runtime.keeperManaged,
+    std::erase_if(runtime.keeper.managed,
         [aura](KeeperAuraState const& state) { return state.aura == aura; });
 }
 
 bool IsTracked(Runtime const& runtime, Aura const* aura)
 {
-    return std::any_of(runtime.keeperManaged.begin(), runtime.keeperManaged.end(),
+    return std::any_of(runtime.keeper.managed.begin(), runtime.keeper.managed.end(),
         [aura](KeeperAuraState const& state) { return state.aura == aura; });
 }
 
@@ -165,7 +161,7 @@ public:
 
     void OnRefresh(Player* player, Runtime& runtime, bool active) override
     {
-        runtime.keeperManaged.clear();
+        runtime.keeper.managed.clear();
         if (active)
             TrackAppliedAuras(player, runtime);
     }
@@ -184,11 +180,11 @@ public:
     {
         if (!player || !player->IsAlive())
         {
-            runtime.keeperManaged.clear();
+            runtime.keeper.managed.clear();
             return;
         }
 
-        for (KeeperAuraState const& state : runtime.keeperManaged)
+        for (KeeperAuraState const& state : runtime.keeper.managed)
         {
             int32 duration = state.aura->GetDuration();
             if (duration <= 0)
@@ -201,7 +197,7 @@ public:
 
     void OnDeath(Player* /*player*/, Runtime& runtime) override
     {
-        runtime.keeperManaged.clear();
+        runtime.keeper.managed.clear();
     }
 
     void OnResurrect(Player* player, Runtime& runtime) override
@@ -224,10 +220,8 @@ public:
             return;
         }
 
-        _savedSettings = GetSettings();
         _settingsSaved = true;
-        MutableSettings().keeperExtraSpells.clear();
-        LoadKeeperExtraSpells(MutableSettings().keeperExtraSpells);
+        TestSettings(actor).keeperExtraSpells.clear();
 
         Item* item = Test::EquipFabledTrinket(actor, Effect::Keeper);
         context.Expect(item != nullptr, "Keeper fabled trinket equipped");
@@ -277,8 +271,7 @@ public:
         context.Expect(elixir->GetDuration() == elixirMaxDuration,
             "elapsed compensation is capped at the original maximum");
 
-        MutableSettings().keeperExtraSpells = " 1243 ";
-        LoadKeeperExtraSpells(MutableSettings().keeperExtraSpells);
+        TestSettings(actor).keeperExtraSpells = " 1243 ";
         actor->RemoveAurasDueToSpell(TEST_EXTRA_SPELL);
         actor->CastSpell(actor, TEST_EXTRA_SPELL, true);
         Aura* managedExtra = actor->GetAura(TEST_EXTRA_SPELL);
@@ -292,7 +285,7 @@ public:
         }
 
         actor->RemoveAurasDueToSpell(TEST_EXTRA_SPELL);
-        context.Expect(runtime.keeperManaged.size() == 1 && IsTracked(runtime, elixir),
+        context.Expect(runtime.keeper.managed.size() == 1 && IsTracked(runtime, elixir),
             "aura remove hook forgets only the exact removed application");
         actor->CastSpell(actor, TEST_EXTRA_SPELL, true);
         Aura* replacement = actor->GetAura(TEST_EXTRA_SPELL);
@@ -307,7 +300,7 @@ public:
         replacement->SetDuration(TEST_FROZEN_DURATION_MS);
         Test::UnequipFabled(actor, Effect::Keeper);
         _equipped = false;
-        context.Expect(runtime.keeperManaged.empty()
+        context.Expect(runtime.keeper.managed.empty()
                 && replacement->GetDuration() == TEST_FROZEN_DURATION_MS
                 && replacement->GetMaxDuration() == ordinaryMaxDuration,
             "unequipping releases current finite auras without replacing or removing them");
@@ -328,7 +321,7 @@ public:
         elixir->SetDuration(elixirBeforeDeath - TEST_ELAPSED_MS);
         replacement->SetDuration(replacementBeforeDeath - TEST_ELAPSED_MS);
         HandleUpdate(actor, TEST_ELAPSED_MS);
-        context.Expect(runtime.keeperManaged.empty()
+        context.Expect(runtime.keeper.managed.empty()
                 && elixir->GetDuration() == elixirBeforeDeath - TEST_ELAPSED_MS
                 && replacement->GetDuration() == replacementBeforeDeath - TEST_ELAPSED_MS,
             "death releases surviving aura timers while Keeper remains equipped");
@@ -368,8 +361,7 @@ private:
 
         if (_settingsSaved)
         {
-            MutableSettings() = _savedSettings;
-            LoadKeeperExtraSpells(MutableSettings().keeperExtraSpells);
+            ClearTestSettings(context.GetActor());
             _settingsSaved = false;
         }
 
@@ -378,23 +370,19 @@ private:
             context.Finish();
     }
 
-    Settings _savedSettings;
     bool _settingsSaved = false;
     bool _equipped = false;
 };
 } // namespace
 
-void LoadKeeperExtraSpells(std::string const& csv)
+std::unique_ptr<Script> MakeKeeper()
 {
-    std::shared_ptr<std::unordered_set<uint32> const> spells =
-        std::make_shared<std::unordered_set<uint32> const>(ParseExtraSpells(csv));
-    std::atomic_store(&_extraSpells, std::move(spells));
+    return std::make_unique<KeeperScript>();
 }
 
-std::unique_ptr<Script> MakeKeeper()
+void RegisterKeeperTests()
 {
     TestHarness::RegisterSuite("fabled-keeper",
         [] { return std::make_unique<KeeperTestSuite>(); });
-    return std::make_unique<KeeperScript>();
 }
 } // namespace Fabled

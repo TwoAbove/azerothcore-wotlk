@@ -33,7 +33,7 @@ public:
         uint32 preventedDamage = damage;
         damage = 0;
 
-        float radius = GetSettings().impactRadiusYd;
+        float radius = GetSettings(player).impactRadiusYd;
         std::list<Unit*> nearby;
         Acore::AnyUnfriendlyUnitInObjectRangeCheck check(player, player, radius);
         Acore::UnitListSearcher<Acore::AnyUnfriendlyUnitInObjectRangeCheck> searcher(player, nearby, check);
@@ -55,10 +55,6 @@ class ImpactTestSuite final : public TestHarness::Suite
 public:
     void Start(TestHarness::Context& context) override
     {
-        _savedSettings = GetSettings();
-        _settingsSaved = true;
-        MutableSettings().impactRadiusYd = 20.0f;
-
         Player* actor = context.GetActor();
         context.Expect(actor != nullptr, "headless actor available");
         context.Expect(IsReady(), "fabled custom spell gate is ready");
@@ -67,6 +63,9 @@ public:
             Finish(context);
             return;
         }
+
+        _settingsSaved = true;
+        TestSettings(actor).impactRadiusYd = 20.0f;
 
         _equipped = Test::EquipFabledTrinket(actor, Effect::Impact) != nullptr;
         context.Expect(_equipped, "Impact fabled trinket equipped");
@@ -192,7 +191,7 @@ private:
         context.DespawnAllDummies();
         if (_settingsSaved)
         {
-            MutableSettings() = _savedSettings;
+            ClearTestSettings(context.GetActor());
             _settingsSaved = false;
         }
     }
@@ -204,7 +203,6 @@ private:
         context.Finish();
     }
 
-    Settings _savedSettings;
     ObjectGuid _firstGuid;
     ObjectGuid _secondGuid;
     Stage _stage = Stage::Done;
@@ -218,10 +216,12 @@ private:
 
 std::unique_ptr<Script> MakeImpact()
 {
-    TestHarness::RegisterSuite("fabled-impact", []
-    {
-        return std::make_unique<ImpactTestSuite>();
-    });
     return std::make_unique<ImpactScript>();
+}
+
+void RegisterImpactTests()
+{
+    TestHarness::RegisterSuite("fabled-impact",
+        [] { return std::make_unique<ImpactTestSuite>(); });
 }
 } // namespace Fabled
