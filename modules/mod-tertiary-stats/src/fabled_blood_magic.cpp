@@ -27,9 +27,9 @@ namespace
 constexpr uint32 SPELL_TEST_ARCANE_EXPLOSION = 1449;
 constexpr uint32 SPELL_TEST_FROSTBOLT = 116;
 
-int32 HealthCost(int32 missingMana)
+int32 HealthCost(Player const* player, int32 missingMana)
 {
-    double cost = std::ceil(double(missingMana) * double(GetSettings().bloodMagicHealthPerMana));
+    double cost = std::ceil(double(missingMana) * double(GetSettings(player).bloodMagicHealthPerMana));
     return int32(std::clamp(cost, 0.0, double(std::numeric_limits<int32>::max())));
 }
 
@@ -58,8 +58,8 @@ void AddBloodDebt(Player* player, int32 debt)
             int64 remaining = int64(effect->GetAmount()) + debt;
             effect->SetAmount(int32(std::min<int64>(
                 remaining, std::numeric_limits<int32>::max())));
-            aura->SetMaxDuration(int32(GetSettings().bloodMagicDebtDurationMs));
-            aura->SetDuration(int32(GetSettings().bloodMagicDebtDurationMs));
+            aura->SetMaxDuration(int32(GetSettings(player).bloodMagicDebtDurationMs));
+            aura->SetDuration(int32(GetSettings(player).bloodMagicDebtDurationMs));
             if (AuraEffect* periodic = aura->GetEffect(EFFECT_1))
                 periodic->ResetPeriodic(true);
         }
@@ -70,7 +70,7 @@ void AddBloodDebt(Player* player, int32 debt)
     values.AddSpellMod(SPELLVALUE_BASE_POINT0, debt);
     values.AddSpellMod(SPELLVALUE_BASE_POINT1, 1);
     values.AddSpellMod(SPELLVALUE_AURA_DURATION,
-        int32(GetSettings().bloodMagicDebtDurationMs));
+        int32(GetSettings(player).bloodMagicDebtDurationMs));
     player->CastCustomSpell(SPELL_BLOOD_MAGIC_DEBT, values, player,
         TriggerCastFlags(TRIGGERED_FULL_MASK | TRIGGERED_DISALLOW_PROC_EVENTS));
 }
@@ -124,7 +124,7 @@ public:
         if (!IsReady() || !IsBloodMagicSpell(player, spell))
             return;
         int32 missingMana = std::max(spell->GetPowerCostBeforeScripts() - spell->GetPowerCost(), 0);
-        AddBloodDebt(player, HealthCost(missingMana));
+        AddBloodDebt(player, HealthCost(player, missingMana));
     }
 };
 
@@ -139,10 +139,6 @@ class BloodMagicTestSuite final : public TestHarness::Suite
 public:
     void Start(TestHarness::Context& context) override
     {
-        _savedSettings = GetSettings();
-        MutableSettings().bloodMagicHealthPerMana = 4.0f;
-        MutableSettings().bloodMagicDebtDurationMs = 3000;
-
         Player* actor = context.GetActor();
         SpellInfo const* explosion = sSpellMgr->GetSpellInfo(SPELL_TEST_ARCANE_EXPLOSION);
         SpellInfo const* frostbolt = sSpellMgr->GetSpellInfo(SPELL_TEST_FROSTBOLT);
@@ -153,6 +149,9 @@ public:
             Cleanup(context);
             return;
         }
+
+        TestSettings(actor).bloodMagicHealthPerMana = 4.0f;
+        TestSettings(actor).bloodMagicDebtDurationMs = 3000;
 
         if (!actor->IsAlive())
         {
@@ -178,7 +177,7 @@ public:
         _healthBeforeDebt = actor->GetHealth();
         _startingMana = uint32(_explosionManaCost - std::min(_explosionManaCost - 1, 5));
         actor->SetPower(POWER_MANA, _startingMana);
-        _partialDebt = HealthCost(_explosionManaCost - int32(_startingMana));
+        _partialDebt = HealthCost(actor, _explosionManaCost - int32(_startingMana));
         actor->CastSpell(actor, SPELL_TEST_ARCANE_EXPLOSION, false);
         context.Expect(actor->GetHealth() == _healthBeforeDebt,
             "Blood Magic applies no immediate health damage");
@@ -216,7 +215,7 @@ public:
             Aura* debtBeforeStack = actor->GetAura(SPELL_BLOOD_MAGIC_DEBT);
             _durationBeforeStack = debtBeforeStack ? debtBeforeStack->GetDuration() : 0;
             _healthBeforeStack = actor->GetHealth();
-            _stackDebt = HealthCost(_explosionManaCost);
+            _stackDebt = HealthCost(actor, _explosionManaCost);
             actor->CastSpell(actor, SPELL_TEST_ARCANE_EXPLOSION, false);
             Aura* debt = actor->GetAura(SPELL_BLOOD_MAGIC_DEBT);
             context.Expect(actor->GetHealth() == _healthBeforeStack,
@@ -311,7 +310,7 @@ public:
         if (_stage == Stage::LethalCast && _waited >= 1700)
         {
             actor->SetPower(POWER_MANA, 0);
-            int32 lethalDebt = HealthCost(_explosionManaCost);
+            int32 lethalDebt = HealthCost(actor, _explosionManaCost);
             actor->SetHealth(std::max<uint32>(1, uint32(lethalDebt / 4)));
             _lethalHealthBefore = actor->GetHealth();
             actor->CastSpell(actor, SPELL_TEST_ARCANE_EXPLOSION, false);
@@ -385,12 +384,11 @@ private:
             actor->CombatStop(true);
         }
         context.DespawnAllDummies();
-        MutableSettings() = _savedSettings;
+        ClearTestSettings(context.GetActor());
         if (!context.IsFinished())
             context.Finish();
     }
 
-    Settings _savedSettings;
     ObjectGuid _dummyGuid;
     uint32 _savedHealth = 0;
     uint32 _savedMana = 0;
@@ -424,8 +422,12 @@ void RegisterBloodMagicSpellScripts()
 std::unique_ptr<Script> MakeBloodMagic()
 {
     new BloodMagicPowerScript();
+    return std::make_unique<BloodMagicScript>();
+}
+
+void RegisterBloodMagicTests()
+{
     TestHarness::RegisterSuite("fabled-blood-magic",
         [] { return std::make_unique<BloodMagicTestSuite>(); });
-    return std::make_unique<BloodMagicScript>();
 }
 } // namespace Fabled

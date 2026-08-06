@@ -44,7 +44,7 @@ void ClearPotionCooldown(Player* player, uint32 spellId, uint32 category)
 
 void AddToxicity(Player* player)
 {
-    Settings const& settings = GetSettings();
+    Settings const& settings = GetSettings(player);
     Aura* aura = player->GetAura(SPELL_TOXICITY);
     if (!aura)
     {
@@ -102,13 +102,8 @@ class AlchemistsGutTestSuite final : public TestHarness::Suite
 public:
     void Start(TestHarness::Context& context) override
     {
-        _stage = Stage::Setup;
-        _savedSettings = GetSettings();
-        _settingsSaved = true;
-        MutableSettings().toxicityPctPerTick = 5.0f;
-        MutableSettings().toxicityDurationMs = 30000;
-
         Player* actor = context.GetActor();
+        _stage = Stage::Setup;
         if (actor)
             _baselinePotionCount = actor->GetItemCount(TEST_POTION_ITEM);
         context.Expect(actor != nullptr, "headless actor available");
@@ -118,6 +113,10 @@ public:
             Finish(context);
             return;
         }
+
+        _settingsSaved = true;
+        TestSettings(actor).toxicityPctPerTick = 5.0f;
+        TestSettings(actor).toxicityDurationMs = 30000;
 
         _equipped = Test::EquipFabledTrinket(actor, Effect::AlchemistsGut) != nullptr;
         context.Expect(_equipped, "Alchemist's Gut trinket equipped");
@@ -229,7 +228,7 @@ public:
             context.Expect(actor->GetLastPotionId() == 0
                     && !actor->HasSpellCooldown(_potionSpellId),
                 "second potion leaves the next potion immediately available");
-            int32 expectedAmount = int32(std::lround(MutableSettings().toxicityPctPerTick)) * 2;
+            int32 expectedAmount = int32(std::lround(TestSettings(actor).toxicityPctPerTick)) * 2;
             context.Expect(amount == expectedAmount,
                 "two Toxicity stacks recalculate to ten percent max health per tick",
                 "amount=" + std::to_string(amount));
@@ -309,7 +308,7 @@ private:
         context.DespawnAllDummies();
         if (_settingsSaved)
         {
-            MutableSettings() = _savedSettings;
+            ClearTestSettings(context.GetActor());
             _settingsSaved = false;
         }
         _stage = Stage::Done;
@@ -318,7 +317,6 @@ private:
     }
 
     Stage _stage = Stage::Done;
-    Settings _savedSettings;
     bool _settingsSaved = false;
     bool _equipped = false;
     uint32 _baselinePotionCount = 0;
@@ -331,8 +329,12 @@ private:
 
 std::unique_ptr<Script> MakeAlchemistsGut()
 {
+    return std::make_unique<AlchemistsGutScript>();
+}
+
+void RegisterAlchemistsGutTests()
+{
     TestHarness::RegisterSuite("fabled-alchemists-gut",
         [] { return std::make_unique<AlchemistsGutTestSuite>(); });
-    return std::make_unique<AlchemistsGutScript>();
 }
 } // namespace Fabled

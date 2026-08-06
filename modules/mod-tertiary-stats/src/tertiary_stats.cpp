@@ -40,9 +40,9 @@
 #include "SpellInfo.h"
 #include "SpellMgr.h"
 #include "SpellScript.h"
-#include "test_harness.h"
 #include "fabled.h"
 #include "item_bonus_seed.h"
+#include "test_harness.h"
 #include "Util.h"
 #include "WorldPacket.h"
 
@@ -203,6 +203,29 @@ struct BonusDefinition
 
 Settings _settings;
 uint32 _settingsRevision = 0;
+thread_local Settings const* _itemRollTestSettings = nullptr;
+thread_local Fabled::Settings const* _fabledRollTestSettings = nullptr;
+
+class ScopedItemRollSettings
+{
+public:
+    ScopedItemRollSettings(Settings const& settings, Fabled::Settings const& fabledSettings)
+        : _previous(_itemRollTestSettings), _previousFabled(_fabledRollTestSettings)
+    {
+        _itemRollTestSettings = &settings;
+        _fabledRollTestSettings = &fabledSettings;
+    }
+
+    ~ScopedItemRollSettings()
+    {
+        _itemRollTestSettings = _previous;
+        _fabledRollTestSettings = _previousFabled;
+    }
+
+private:
+    Settings const* _previous;
+    Fabled::Settings const* _previousFabled;
+};
 
 struct PeriodicAreaState
 {
@@ -222,6 +245,7 @@ struct TertiaryState : public DataMap::Base
     bool disabled = false;
     bool processing = false;
     bool pendingUnbroken = false;
+    std::unique_ptr<Settings> testSettings;
 
     uint64 lastTempoCheckMs = 0;
     uint64 lastEchoCheckMs = 0;
@@ -267,12 +291,11 @@ float ClampChance(float value)
 }
 
 
-float FabledRollChance(uint32 quality)
+float FabledRollChance(uint32 quality, Fabled::Settings const& settings)
 {
     if (quality < ITEM_QUALITY_UNCOMMON || quality > ITEM_QUALITY_EPIC)
         return 0.0f;
 
-    Fabled::Settings const& settings = Fabled::GetSettings();
     return ClampChance(settings.chance
         * settings.chanceMultipliers[quality - ITEM_QUALITY_UNCOMMON]);
 }
@@ -414,6 +437,25 @@ TertiaryState* FindState(Player* player)
 TertiaryState* GetState(Player* player)
 {
     return player->CustomData.GetDefault<TertiaryState>(STATE_KEY);
+}
+
+Settings const& SettingsFor(TertiaryState const& state)
+{
+    return state.testSettings ? *state.testSettings : _settings;
+}
+
+Settings& TestSettings(Player* player)
+{
+    TertiaryState* state = GetState(player);
+    if (!state->testSettings)
+        state->testSettings = std::make_unique<Settings>(_settings);
+    return *state->testSettings;
+}
+
+void ClearTestSettings(Player* player)
+{
+    if (TertiaryState* state = FindState(player))
+        state->testSettings.reset();
 }
 
 uint8 ItemPointIndex(ItemTemplate const* itemTemplate)
@@ -631,31 +673,32 @@ Power PickWeightedPower(BonusRng& rng, uint8 selectedMask, bool wantExotic)
     return Power::Count;
 }
 
-Power PickPower(BonusRng& rng, uint8 selectedMask)
+Power PickPower(BonusRng& rng, uint8 selectedMask, Settings const& settings)
 {
-    bool wantExotic = rng.RollChance(100.0f - _settings.ordinaryChance);
+    bool wantExotic = rng.RollChance(100.0f - settings.ordinaryChance);
     Power power = PickWeightedPower(rng, selectedMask, wantExotic);
     if (power == Power::Count)
         power = PickWeightedPower(rng, selectedMask, !wantExotic);
     return power;
 }
 
-uint16 RollBonus(ItemTemplate const* itemTemplate, BonusRng& rng)
+uint16 RollBonus(ItemTemplate const* itemTemplate, BonusRng& rng,
+    Settings const& settings, Fabled::Settings const& fabledSettings)
 {
-    if (!IsEligibleEquipment(itemTemplate) || !rng.RollChance(_settings.rollChance))
+    if (!IsEligibleEquipment(itemTemplate) || !rng.RollChance(settings.rollChance))
         return 0;
     std::span<Fabled::Effect const> fabledPool = Fabled::EffectPoolFor(itemTemplate);
     if (Fabled::IsReady() && !fabledPool.empty()
-        && rng.RollChance(FabledRollChance(itemTemplate->Quality)))
+        && rng.RollChance(FabledRollChance(itemTemplate->Quality, fabledSettings)))
         return Fabled::BonusId(fabledPool[rng.Range(0, uint32(fabledPool.size() - 1))]);
 
     uint8 mask = 0;
     for (uint8 slot = 0; slot < MAX_POWERS_PER_ITEM; ++slot)
     {
-        if (slot && !rng.RollChance(_settings.rollChance))
+        if (slot && !rng.RollChance(settings.rollChance))
             break;
 
-        Power power = PickPower(rng, mask);
+        Power power = PickPower(rng, mask, settings);
         if (power == Power::Count)
             break;
         mask |= PowerBit(power);
@@ -768,7 +811,9 @@ float TempoSpeed(TertiaryState const& state)
 
 float TempoPpm(TertiaryState const& state)
 {
-    return LinearValue(Points(state, Power::Tempo), _settings.tempoPpmBase, _settings.tempoPpmPerPoint);
+    Settings const& settings = SettingsFor(state);
+    return LinearValue(Points(state, Power::Tempo), settings.tempoPpmBase,
+        settings.tempoPpmPerPoint);
 }
 
 float TempoCooldownMs(TertiaryState const& state)
@@ -783,8 +828,9 @@ float EchoPercent(TertiaryState const& state)
 }
 float EchoPpm(TertiaryState const& state)
 {
-    return LinearValue(Points(state, Power::Echo), _settings.echoPpmBase,
-        _settings.echoPpmPerPoint);
+    Settings const& settings = SettingsFor(state);
+    return LinearValue(Points(state, Power::Echo), settings.echoPpmBase,
+        settings.echoPpmPerPoint);
 }
 
 float OpportunityPpm(TertiaryState const& state)
@@ -817,7 +863,7 @@ void RefreshEquipment(Player* player, TertiaryState& state)
         if (!item)
             continue;
 
-        if (!_settings.enabled || !_dbcReady)
+        if (!SettingsFor(state).enabled || !_dbcReady)
             continue;
 
         BonusDefinition definition;
@@ -1227,10 +1273,9 @@ void TryTempo(Player* player, TertiaryState& state)
     if (speed <= 0)
         return;
 
-    CastTertiarySpell(player, state, player, SPELL_TEMPO, speed, speed, speed,
-        _settings.tempoDurationMs);
-    CastTertiarySpell(player, state, player, SPELL_TEMPO_COOLDOWN, 0, 0, 0,
-        _settings.tempoDurationMs);
+    uint32 durationMs = SettingsFor(state).tempoDurationMs;
+    CastTertiarySpell(player, state, player, SPELL_TEMPO, speed, speed, speed, durationMs);
+    CastTertiarySpell(player, state, player, SPELL_TEMPO_COOLDOWN, 0, 0, 0, durationMs);
 }
 
 void TryOpportunity(Player* player, TertiaryState& state)
@@ -1275,13 +1320,13 @@ void TryEcho(Player* player, TertiaryState& state, Unit* target, uint32 amount, 
         return;
 
     state.echoActive = true;
-    state.echoEndsAtMs = uint64(GameTime::GetGameTimeMS().count()) + _settings.echoDurationMs;
+    state.echoEndsAtMs = uint64(GameTime::GetGameTimeMS().count()) + SettingsFor(state).echoDurationMs;
     state.echoPercent = percent;
     state.echoDamage = 0;
     state.echoHealing = 0;
     state.echoDamageAnchor.Clear();
     CastTertiarySpell(player, state, player, SPELL_ECHO_AURA, int32(std::lround(percent)), 0, 0,
-        _settings.echoDurationMs);
+        SettingsFor(state).echoDurationMs);
     AddEchoOutput(state, target, amount, healing);
 }
 
@@ -1973,7 +2018,10 @@ public:
             return;
 
         BonusRng rng(entropy, itemTemplate->ItemId);
-        bonusSeed = MakeItemBonusSeed(RollBonus(itemTemplate, rng));
+        Settings const& settings = _itemRollTestSettings ? *_itemRollTestSettings : _settings;
+        Fabled::Settings const& fabledSettings = _fabledRollTestSettings
+            ? *_fabledRollTestSettings : Fabled::GetSettings();
+        bonusSeed = MakeItemBonusSeed(RollBonus(itemTemplate, rng, settings, fabledSettings));
         if (bonusSeed != MakeItemBonusSeed(0))
             bonusSeed = AddHeirloomProfile(bonusSeed, HeirloomProfileFor(itemTemplate));
     }
@@ -2055,7 +2103,7 @@ public:
         TertiaryState* state = FindState(player);
         if (!state)
             return;
-        if (!_settings.enabled)
+        if (!SettingsFor(*state).enabled)
         {
             if (!state->disabled)
             {
@@ -2668,15 +2716,15 @@ public:
                 == uint32(std::numeric_limits<int32>::max()),
             "aura durations clamp to the signed duration range");
 
-        Fabled::Settings& fabledSettings = Fabled::MutableSettings();
+        Fabled::Settings fabledSettings = Fabled::GetSettings();
         float savedQualityFabledChance = fabledSettings.chance;
         std::array<float, 3> savedFabledMultipliers = fabledSettings.chanceMultipliers;
         fabledSettings.chance = 3.0f;
         fabledSettings.chanceMultipliers = { 1.0f, 2.0f, 4.0f };
         bool qualityChancesMatch = _settings.rollChance == 70.0f
-            && FabledRollChance(ITEM_QUALITY_UNCOMMON) == 3.0f
-            && FabledRollChance(ITEM_QUALITY_RARE) == 6.0f
-            && FabledRollChance(ITEM_QUALITY_EPIC) == 12.0f;
+            && FabledRollChance(ITEM_QUALITY_UNCOMMON, fabledSettings) == 3.0f
+            && FabledRollChance(ITEM_QUALITY_RARE, fabledSettings) == 6.0f
+            && FabledRollChance(ITEM_QUALITY_EPIC, fabledSettings) == 12.0f;
         fabledSettings.chance = savedQualityFabledChance;
         fabledSettings.chanceMultipliers = savedFabledMultipliers;
         context.Expect(qualityChancesMatch,
@@ -2760,15 +2808,18 @@ public:
             "level=" + std::to_string(actor->GetLevel())
                 + " points=" + std::to_string(resolvedProfiled.pointsPerPower));
 
-        Settings savedHeirloomSettings = _settings;
-        float savedHeirloomFabledChance = Fabled::MutableSettings().chance;
-        _settings.rollChance = 100.0f;
-        _settings.ordinaryChance = 100.0f;
-        _settings.maxQuality = ITEM_QUALITY_EPIC;
-        Fabled::MutableSettings().chance = 0.0f;
-        Item* generatedHeirloom = Item::CreateItem(90000, 1, actor);
-        _settings = savedHeirloomSettings;
-        Fabled::MutableSettings().chance = savedHeirloomFabledChance;
+        Settings heirloomRollSettings = _settings;
+        heirloomRollSettings.rollChance = 100.0f;
+        heirloomRollSettings.ordinaryChance = 100.0f;
+        heirloomRollSettings.maxQuality = ITEM_QUALITY_EPIC;
+        Fabled::Settings heirloomFabledSettings = Fabled::GetSettings();
+        heirloomFabledSettings.chance = 0.0f;
+        Item* generatedHeirloom = nullptr;
+        {
+            ScopedItemRollSettings scopedHeirloomSettings(
+                heirloomRollSettings, heirloomFabledSettings);
+            generatedHeirloom = Item::CreateItem(90000, 1, actor);
+        }
         context.Expect(generatedHeirloom && TertiaryBonusOf(generatedHeirloom)
                 && HeirloomProfileFromSeed(generatedHeirloom->GetBonusSeed()) == HeirloomProfile::Trinket,
             "heirlooms remain explicitly eligible when ordinary quality eligibility ends at epic");
@@ -2776,27 +2827,20 @@ public:
 
 
 
-        Settings savedRollSettings = _settings;
-        float savedDeterministicFabledChance = Fabled::MutableSettings().chance;
-        _settings.rollChance = 100.0f;
-        Fabled::MutableSettings().chance = 100.0f;
-        Item* deterministicFabledItem = Item::CreateItem(16859, 1, actor);
-        _settings = savedRollSettings;
-        Fabled::MutableSettings().chance = savedDeterministicFabledChance;
-        context.Expect(deterministicFabledItem
-                && Fabled::EffectFromBonusId(TertiaryBonusOf(deterministicFabledItem))
-                    == Fabled::Effect::Impact,
+        Settings deterministicRollSettings = _settings;
+        deterministicRollSettings.rollChance = 100.0f;
+        Fabled::Settings deterministicFabledSettings = Fabled::GetSettings();
+        deterministicFabledSettings.chance = 100.0f;
+        BonusRng deterministicFabledRng(1, 16859);
+        uint16 deterministicFabledBonus = RollBonus(sObjectMgr->GetItemTemplate(16859),
+            deterministicFabledRng, deterministicRollSettings, deterministicFabledSettings);
+        context.Expect(Fabled::EffectFromBonusId(deterministicFabledBonus)
+                == Fabled::Effect::Impact,
             "Fabled conversion chooses the effect assigned to the item's slot");
-        delete deterministicFabledItem;
 
-        Fabled::Settings& suffixFabledSettings = Fabled::MutableSettings();
-        float savedSuffixFabledChance = suffixFabledSettings.chance;
-        _settings.rollChance = 100.0f;
-        _settings.ordinaryChance = 100.0f;
-        suffixFabledSettings.chance = 0.0f;
         Item* suffixItem = Item::CreateItem(TEST_SUFFIX_ITEM_ENTRY, 1, actor);
-        _settings = savedRollSettings;
-        suffixFabledSettings.chance = savedSuffixFabledChance;
+        if (suffixItem)
+            suffixItem->SetBonusSeed(MakeItemBonusSeed(fixedFleetfoot));
         int32 suffixProperty = suffixItem ? suffixItem->GetItemRandomPropertyId() : 0;
         uint32 suffixSeed = suffixItem ? suffixItem->GetBonusSeed() : 0;
         context.Expect(suffixItem && suffixProperty < 0 && suffixItem->GetItemSuffixFactor()
@@ -2806,11 +2850,8 @@ public:
                 + " suffix=" + std::to_string(suffixItem ? suffixItem->GetItemSuffixFactor() : 0)
                 + " seed=" + std::to_string(suffixSeed));
         delete suffixItem;
-        float savedReforgeFabledChance = Fabled::MutableSettings().chance;
-        Fabled::MutableSettings().chance = 0.0f;
         bool sourceAdded = actor->AddItem(16957, 1);
         bool destinationAdded = actor->AddItem(12006, 1);
-        Fabled::MutableSettings().chance = savedReforgeFabledChance;
         Item* reforgeSource = sourceAdded ? actor->GetItemByEntry(16957) : nullptr;
         Item* reforgeDestination = destinationAdded ? actor->GetItemByEntry(12006) : nullptr;
         ObjectGuid reforgeSourceGuid = reforgeSource ? reforgeSource->GetGUID() : ObjectGuid::Empty;
@@ -2941,21 +2982,9 @@ public:
         }
         _dummyGuid = dummy->GetGUID();
 
-        Settings saved = _settings;
-        _settings.rollChance = 100.0f;
-        _settings.ordinaryChance = 100.0f;
-        _settings.weights.fill(0.0f);
-        _settings.weights[PowerIndex(Power::Avoidance)] = 1.0f;
-        _settings.weights[PowerIndex(Power::Fleetfoot)] = 1.0f;
-        _settings.weights[PowerIndex(Power::Siphon)] = 1.0f;
-        float savedFabledChance = Fabled::MutableSettings().chance;
-        Fabled::MutableSettings().chance = 0.0f;
-
         constexpr uint32 TEST_ITEM = 14136; // Robe of Winter Night: unrestricted rare cloth.
         uint16 equipmentPosition = uint16(INVENTORY_SLOT_BAG_0) << 8 | EQUIPMENT_SLOT_CHEST;
         _item = actor->EquipNewItem(equipmentPosition, TEST_ITEM, true);
-        _settings = saved;
-        Fabled::MutableSettings().chance = savedFabledChance;
         context.Expect(_item && _item->GetEntry() == TEST_ITEM, "eligible test item equipped");
         if (!_item || _item->GetEntry() != TEST_ITEM)
         {
@@ -2977,8 +3006,20 @@ public:
 
         constexpr uint8 ORDINARY_MASK =
             PowerBit(Power::Avoidance) | PowerBit(Power::Fleetfoot) | PowerBit(Power::Siphon);
+        Settings ordinaryRollSettings = _settings;
+        ordinaryRollSettings.rollChance = 100.0f;
+        ordinaryRollSettings.ordinaryChance = 100.0f;
+        ordinaryRollSettings.weights.fill(0.0f);
+        ordinaryRollSettings.weights[PowerIndex(Power::Avoidance)] = 1.0f;
+        ordinaryRollSettings.weights[PowerIndex(Power::Fleetfoot)] = 1.0f;
+        ordinaryRollSettings.weights[PowerIndex(Power::Siphon)] = 1.0f;
+        Fabled::Settings ordinaryFabledSettings = Fabled::GetSettings();
+        ordinaryFabledSettings.chance = 0.0f;
+        BonusRng ordinaryRng(1, TEST_ITEM);
+        uint16 rolledBonusId = RollBonus(_item->GetTemplate(), ordinaryRng,
+            ordinaryRollSettings, ordinaryFabledSettings);
+        _item->SetBonusSeed(MakeItemBonusSeed(rolledBonusId));
         BonusDefinition rolledDefinition;
-        uint16 rolledBonusId = TertiaryBonusOf(_item);
         bool definitionResolved = DecodeBonusId(rolledBonusId, rolledDefinition);
         context.Expect(IsEligibleEquipment(_item->GetTemplate()) && definitionResolved
                 && rolledDefinition.powerMask == ORDINARY_MASK
@@ -3110,10 +3151,11 @@ public:
                 && !actor->HasAura(SPELL_FLEETFOOT_FLIGHT_PASSIVE),
             "ordinary passives removed after equipment changes");
 
-        _settings.tempoPpmBase = 60.0f;
-        _settings.tempoPpmPerPoint = 0.0f;
-        _settings.echoPpmBase = 60.0f;
-        _settings.echoPpmPerPoint = 0.0f;
+        Settings& procTestSettings = TestSettings(actor);
+        procTestSettings.tempoPpmBase = 60.0f;
+        procTestSettings.tempoPpmPerPoint = 0.0f;
+        procTestSettings.echoPpmBase = 60.0f;
+        procTestSettings.echoPpmPerPoint = 0.0f;
         state->lastEchoCheckMs = 0;
         state->lastTempoCheckMs = 0;
         bool exoticDamageExecuted = context.Damage(_dummyGuid, 1000);
@@ -3153,7 +3195,7 @@ public:
         CastTertiarySpell(actor, *state, actor, SPELL_SIPHON_HEAL, 100);
         context.Expect(!state->echoActive,
             "tertiary output cannot awaken a new Echo");
-        _settings = saved;
+        ClearTestSettings(actor);
         float expectedEchoPpm = _settings.echoPpmBase
             + Points(*state, Power::Echo) * _settings.echoPpmPerPoint;
         context.Expect(std::fabs(EchoPpm(*state) - expectedEchoPpm) < 0.001f,
@@ -3679,8 +3721,8 @@ private:
             _settings.tempoDurationMs);
         state->pendingUnbroken = true;
         state->echoActive = true;
-        _settings.enabled = false;
-        ++_settingsRevision;
+        TestSettings(actor).enabled = false;
+        state->needsRefresh = true;
         sScriptMgr->OnPlayerUpdate(actor, 0);
         context.Expect(state->disabled && HasExactPoints(*state, 0)
                 && !state->pendingUnbroken && !state->tempoPendingCast
@@ -3691,11 +3733,12 @@ private:
                 && !actor->HasAura(SPELL_TEMPO_COOLDOWN)
                 && !actor->HasAura(SPELL_ECHO_AURA),
             "live disable removes tertiary effects and resets proc state");
-        _settings.enabled = true;
-        ++_settingsRevision;
+        TestSettings(actor).enabled = true;
+        state->needsRefresh = true;
         sScriptMgr->OnPlayerUpdate(actor, 0);
         context.Expect(!state->disabled && HasExactPoints(*state, TEMPO_OPPORTUNITY_MASK),
             "live re-enable refreshes equipped tertiary bonuses");
+        ClearTestSettings(actor);
 
         CharacterDatabaseTransaction transaction = CharacterDatabase.BeginTransaction();
         actor->SaveInventoryAndGoldToDB(transaction);
@@ -3747,6 +3790,8 @@ private:
 
 void AddSC_tertiary_stats()
 {
+    Fabled::RegisterScripts();
+    Fabled::RegisterTests();
 
     TestHarness::RegisterSuite("tertiary-stats",
         [] { return std::make_unique<TertiaryStatsTestSuite>(); });

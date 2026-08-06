@@ -64,7 +64,7 @@ bool IsHardControlAura(SpellInfo const* spellInfo, uint8 effectMask)
 
 void SetReady(Runtime& runtime, bool ready)
 {
-    runtime.indomitableReady = ready;
+    runtime.indomitable.ready = ready;
 }
 
 class IndomitableScript final : public Script
@@ -84,7 +84,7 @@ public:
         Unit* caster, SpellInfo const* spellInfo, uint8 candidateEffectMask,
         uint8& immuneEffectMask) override
     {
-        if (!runtime.indomitableReady || !caster || caster == player
+        if (!runtime.indomitable.ready || !caster || caster == player
             || player->IsFriendlyTo(caster)
             || spellInfo->HasAttribute(SPELL_ATTR0_NO_IMMUNITIES))
             return;
@@ -130,12 +130,12 @@ public:
         actor->RemoveAurasDueToSpell(TEST_ROOT_SPELL);
         actor->RemoveAurasDueToSpell(TEST_STUN_SPELL);
         _equipped = Test::EquipFabledTrinket(actor, Effect::Indomitable) != nullptr;
-        context.Expect(_equipped && GetRuntime(actor).indomitableReady,
+        context.Expect(_equipped && GetRuntime(actor).indomitable.ready,
             "Indomitable readies when equipped outside combat");
 
         actor->CastSpell(actor, TEST_STUN_SPELL, true);
         context.Expect(actor->HasAura(TEST_STUN_SPELL)
-                && GetRuntime(actor).indomitableReady,
+                && GetRuntime(actor).indomitable.ready,
             "friendly control does not block or consume the charge");
         actor->RemoveAurasDueToSpell(TEST_STUN_SPELL);
 
@@ -176,7 +176,7 @@ public:
         {
             dummy->CastSpell(actor, TEST_ROOT_SPELL, true);
             context.Expect(actor->HasAura(TEST_ROOT_SPELL)
-                    && GetRuntime(actor).indomitableReady,
+                    && GetRuntime(actor).indomitable.ready,
                 "roots apply without consuming Indomitable");
             actor->RemoveAurasDueToSpell(TEST_ROOT_SPELL);
             _stage = Stage::BlockStun;
@@ -188,7 +188,7 @@ public:
             dummy->CastSpell(actor, TEST_STUN_SPELL, true);
             context.Expect(!actor->HasAura(TEST_STUN_SPELL)
                     && !actor->HasUnitState(UNIT_STATE_STUNNED)
-                    && !GetRuntime(actor).indomitableReady,
+                    && !GetRuntime(actor).indomitable.ready,
                 "the first hostile hard control aura is rejected before application");
             _stage = Stage::AllowSecondStun;
             return;
@@ -245,8 +245,12 @@ private:
 
 std::unique_ptr<Script> MakeIndomitable()
 {
+    return std::make_unique<IndomitableScript>();
+}
+
+void RegisterIndomitableTests()
+{
     TestHarness::RegisterSuite("fabled-indomitable",
         [] { return std::make_unique<IndomitableTestSuite>(); });
-    return std::make_unique<IndomitableScript>();
 }
 } // namespace Fabled

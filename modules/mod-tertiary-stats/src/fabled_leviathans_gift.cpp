@@ -29,7 +29,7 @@ void RefreshSwimBonus(Player* player)
     if (!swim)
         return;
 
-    int32 amount = int32(std::lround(GetSettings().leviathanSwimPct));
+    int32 amount = int32(std::lround(GetSettings(player).leviathanSwimPct));
     for (AuraEffect const* effect :
         player->GetAuraEffectsByType(SPELL_AURA_MOD_INCREASE_SWIM_SPEED))
     {
@@ -54,7 +54,7 @@ public:
             return;
 
         CustomSpellValues values;
-        values.AddSpellMod(SPELLVALUE_BASE_POINT1, int32(std::lround(GetSettings().leviathanSwimPct)));
+        values.AddSpellMod(SPELLVALUE_BASE_POINT1, int32(std::lround(GetSettings(player).leviathanSwimPct)));
         player->CastCustomSpell(SPELL_LEVIATHAN_PASSIVE, values, player, FABLED_TRIGGER_FLAGS);
 
         if (Aura* aura = player->GetAura(SPELL_LEVIATHAN_PASSIVE))
@@ -89,9 +89,6 @@ public:
             context.Finish();
             return;
         }
-
-        _savedSettings = GetSettings();
-        _settingsSaved = true;
         actor->RemoveAurasDueToSpell(SPELL_LEVIATHAN_PASSIVE);
         _baseSwimRate = actor->GetSpeedRate(MOVE_SWIM);
 
@@ -125,7 +122,7 @@ public:
         {
             Aura* aura = actor->GetAura(SPELL_LEVIATHAN_PASSIVE);
             float actualRate = actor->GetSpeedRate(MOVE_SWIM);
-            float expectedRate = _baseSwimRate * (1.0f + GetSettings().leviathanSwimPct / 100.0f);
+            float expectedRate = _baseSwimRate * (1.0f + GetSettings(actor).leviathanSwimPct / 100.0f);
             context.Expect(aura != nullptr && aura->GetMaxDuration() == -1 && aura->GetDuration() == -1,
                 "Leviathan's Gift applies its permanent passive aura");
             context.Expect(actor->HasAuraType(SPELL_AURA_WATER_BREATHING),
@@ -143,7 +140,7 @@ public:
             RefreshSwimBonus(actor);
             float additiveRate = actor->GetSpeedRate(MOVE_SWIM);
             float expectedAdditiveRate = _baseSwimRate
-                * (1.0f + (GetSettings().leviathanSwimPct + 20.0f) / 100.0f);
+                * (1.0f + (GetSettings(actor).leviathanSwimPct + 20.0f) / 100.0f);
             context.Expect(std::fabs(additiveRate - expectedAdditiveRate) < 0.02f,
                 "Leviathan adds Fleetfoot to its swim-speed modifier",
                 "actual=" + std::to_string(additiveRate)
@@ -217,10 +214,6 @@ private:
                 Test::UnequipFabled(actor, Effect::LeviathansGift);
         _equipped = false;
 
-        if (_settingsSaved)
-            MutableSettings() = _savedSettings;
-        _settingsSaved = false;
-
         context.DespawnAllDummies();
         _stage = Stage::Done;
         if (finish)
@@ -228,18 +221,20 @@ private:
     }
 
     Stage _stage = Stage::Done;
-    Settings _savedSettings;
     float _baseSwimRate = 1.0f;
     uint32 _elapsed = 0;
-    bool _settingsSaved = false;
     bool _equipped = false;
 };
 } // namespace
 
 std::unique_ptr<Script> MakeLeviathansGift()
 {
+    return std::make_unique<LeviathansGiftScript>();
+}
+
+void RegisterLeviathansGiftTests()
+{
     TestHarness::RegisterSuite("fabled-leviathans-gift",
         [] { return std::make_unique<LeviathansGiftTestSuite>(); });
-    return std::make_unique<LeviathansGiftScript>();
 }
 } // namespace Fabled

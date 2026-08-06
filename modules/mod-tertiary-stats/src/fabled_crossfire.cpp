@@ -40,8 +40,8 @@ public:
         if (active)
             return;
 
-        runtime.crossfirePreviousTarget.Clear();
-        runtime.crossfireCurrentTarget.Clear();
+        runtime.crossfire.previousTarget.Clear();
+        runtime.crossfire.currentTarget.Clear();
     }
     void OnDealtDamageFinal(Player* player, Runtime& runtime, Unit* victim, uint32 damage,
         SpellInfo const* spellInfo, DamageKind kind) override
@@ -51,18 +51,18 @@ public:
             return;
 
         ObjectGuid victimGuid = victim->GetGUID();
-        if (victimGuid != runtime.crossfireCurrentTarget)
+        if (victimGuid != runtime.crossfire.currentTarget)
         {
-            runtime.crossfirePreviousTarget = runtime.crossfireCurrentTarget;
-            runtime.crossfireCurrentTarget = victimGuid;
+            runtime.crossfire.previousTarget = runtime.crossfire.currentTarget;
+            runtime.crossfire.currentTarget = victimGuid;
         }
 
-        if (runtime.crossfirePreviousTarget.IsEmpty()
-            || runtime.crossfirePreviousTarget == victimGuid)
+        if (runtime.crossfire.previousTarget.IsEmpty()
+            || runtime.crossfire.previousTarget == victimGuid)
             return;
 
-        Unit* previousTarget = ObjectAccessor::GetUnit(*player, runtime.crossfirePreviousTarget);
-        Settings const& settings = GetSettings();
+        Unit* previousTarget = ObjectAccessor::GetUnit(*player, runtime.crossfire.previousTarget);
+        Settings const& settings = GetSettings(player);
         if (!previousTarget || !previousTarget->IsAlive()
             || player->IsFriendlyTo(previousTarget)
             || !player->IsWithinDistInMap(previousTarget, settings.crossfireRangeYd))
@@ -94,11 +94,9 @@ public:
             context.Finish();
             return;
         }
-
-        _savedSettings = GetSettings();
         _settingsSaved = true;
-        MutableSettings().crossfirePct = 30.0f;
-        MutableSettings().crossfireRangeYd = 40.0f;
+        TestSettings(actor).crossfirePct = 30.0f;
+        TestSettings(actor).crossfireRangeYd = 40.0f;
 
         _equipped = Test::EquipFabledTrinket(actor, Effect::Crossfire) != nullptr;
         context.Expect(_equipped, "Crossfire trinket equips");
@@ -109,8 +107,8 @@ public:
         }
 
         Runtime& runtime = GetRuntime(actor);
-        runtime.crossfirePreviousTarget.Clear();
-        runtime.crossfireCurrentTarget.Clear();
+        runtime.crossfire.previousTarget.Clear();
+        runtime.crossfire.currentTarget.Clear();
 
         Creature* targetA = context.SpawnDummy(3.0f, -0.4f);
         Creature* targetB = context.SpawnDummy(3.0f, 0.4f);
@@ -179,8 +177,8 @@ public:
             context.Expect(targetA->GetHealth() < _firstTargetBefore
                     && targetB->GetHealth() == _secondTargetBefore,
                 "the first direct spell damages only target A");
-            context.Expect(runtime.crossfireCurrentTarget == _targetA
-                    && runtime.crossfirePreviousTarget.IsEmpty(),
+            context.Expect(runtime.crossfire.currentTarget == _targetA
+                    && runtime.crossfire.previousTarget.IsEmpty(),
                 "the first direct hit establishes the current target");
 
             _firstTargetBeforeEcho = targetA->GetHealth();
@@ -213,22 +211,22 @@ public:
             uint32 directDamage = directEvent ? uint32(directEvent->amount) : 0;
             uint32 echoDamage = echoEvent ? uint32(echoEvent->amount) : 0;
             uint32 expectedEcho = uint32(double(directDamage)
-                * double(MutableSettings().crossfirePct) / 100.0);
+                * double(TestSettings(actor).crossfirePct) / 100.0);
             Runtime& runtime = GetRuntime(actor);
             context.Expect(directDamage > 1 && echoDamage == expectedEcho,
                 "a lethal Fire hit echoes from its full amount before the primary target dies",
                 "direct=" + std::to_string(directDamage)
                     + " applied=" + std::to_string(echoDamage)
                     + " expected=" + std::to_string(expectedEcho));
-            context.Expect(runtime.crossfireCurrentTarget == _targetB
-                    && runtime.crossfirePreviousTarget == _targetA,
+            context.Expect(runtime.crossfire.currentTarget == _targetB
+                    && runtime.crossfire.previousTarget == _targetA,
                 "switching targets rotates the Crossfire target history");
             CrossfireScript script;
             uint32 savedArmor = targetA->GetArmor();
             targetA->SetArmor(50000);
             uint32 armoredTargetBefore = targetA->GetHealth();
             uint32 rawArmoredEcho = uint32(float(TEST_DAMAGE)
-                * MutableSettings().crossfirePct / 100.0f);
+                * TestSettings(actor).crossfirePct / 100.0f);
             SpellInfo const* outputInfo = sSpellMgr->GetSpellInfo(SPELL_CROSSFIRE_DAMAGE);
             uint32 expectedArmoredEcho = Unit::CalcArmorReducedDamage(
                 actor, targetA, rawArmoredEcho, outputInfo, 0, BASE_ATTACK);
@@ -259,30 +257,30 @@ public:
                 "Crossfire preserves the original spell school for immunity");
 
             uint32 firstTargetBeforeMiss = targetA->GetHealth();
-            ObjectGuid currentBeforeMiss = runtime.crossfireCurrentTarget;
-            ObjectGuid previousBeforeMiss = runtime.crossfirePreviousTarget;
+            ObjectGuid currentBeforeMiss = runtime.crossfire.currentTarget;
+            ObjectGuid previousBeforeMiss = runtime.crossfire.previousTarget;
             uint32 missedMeleeDamage = TEST_DAMAGE;
             sScriptMgr->ModifyMeleeDamage(targetB, actor, missedMeleeDamage);
             context.Expect(targetA->GetHealth() == firstTargetBeforeMiss
-                    && runtime.crossfireCurrentTarget == currentBeforeMiss
-                    && runtime.crossfirePreviousTarget == previousBeforeMiss,
+                    && runtime.crossfire.currentTarget == currentBeforeMiss
+                    && runtime.crossfire.previousTarget == previousBeforeMiss,
                 "an unresolved melee swing neither echoes nor changes target history");
 
 
             uint32 healthBeforePeriodic = targetA->GetHealth();
-            ObjectGuid currentBeforePeriodic = runtime.crossfireCurrentTarget;
-            ObjectGuid previousBeforePeriodic = runtime.crossfirePreviousTarget;
+            ObjectGuid currentBeforePeriodic = runtime.crossfire.currentTarget;
+            ObjectGuid previousBeforePeriodic = runtime.crossfire.previousTarget;
             uint32 periodicDamage = TEST_DAMAGE;
             script.OnDealtDamageFinal(actor, runtime, targetB, periodicDamage, nullptr,
                 DamageKind::Periodic);
             context.Expect(targetA->GetHealth() == healthBeforePeriodic
-                    && runtime.crossfireCurrentTarget == currentBeforePeriodic
-                    && runtime.crossfirePreviousTarget == previousBeforePeriodic,
+                    && runtime.crossfire.currentTarget == currentBeforePeriodic
+                    && runtime.crossfire.previousTarget == previousBeforePeriodic,
                 "periodic damage neither echoes nor changes target history");
 
-            targetA->NearTeleportTo(actor->GetPositionX() + MutableSettings().crossfireRangeYd + 10.0f,
+            targetA->NearTeleportTo(actor->GetPositionX() + TestSettings(actor).crossfireRangeYd + 10.0f,
                 actor->GetPositionY(), actor->GetPositionZ(), targetA->GetOrientation());
-            context.Expect(!actor->IsWithinDistInMap(targetA, MutableSettings().crossfireRangeYd),
+            context.Expect(!actor->IsWithinDistInMap(targetA, TestSettings(actor).crossfireRangeYd),
                 "previous target A is moved beyond Crossfire range");
             uint32 firstTargetBeforeRangeHit = targetA->GetHealth();
             script.OnDealtDamageFinal(actor, runtime, targetB, TEST_DAMAGE, nullptr,
@@ -293,13 +291,13 @@ public:
                     + "/" + std::to_string(firstTargetBeforeRangeHit)
                     + " distance=" + std::to_string(actor->GetDistance(targetA)));
 
-            ObjectGuid previousBeforeDespawn = runtime.crossfirePreviousTarget;
+            ObjectGuid previousBeforeDespawn = runtime.crossfire.previousTarget;
             context.Expect(context.DespawnDummy(_targetA),
                 "previous target A despawns cleanly");
             script.OnDealtDamageFinal(actor, runtime, targetB, TEST_DAMAGE, nullptr,
                 DamageKind::Spell);
             context.Expect(ObjectAccessor::GetUnit(*actor, _targetA) == nullptr
-                    && runtime.crossfirePreviousTarget == previousBeforeDespawn,
+                    && runtime.crossfire.previousTarget == previousBeforeDespawn,
                 "a stale previous target is ignored without changing target history");
             Cleanup(context, true);
             return;
@@ -359,7 +357,7 @@ private:
         _equipped = false;
 
         if (_settingsSaved)
-            MutableSettings() = _savedSettings;
+            ClearTestSettings(context.GetActor());
         _settingsSaved = false;
 
         context.DespawnAllDummies();
@@ -369,7 +367,6 @@ private:
     }
 
     Stage _stage = Stage::Done;
-    Settings _savedSettings;
     ObjectGuid _targetA;
     ObjectGuid _targetB;
     uint32 _elapsed = 0;
@@ -385,8 +382,12 @@ private:
 
 std::unique_ptr<Script> MakeCrossfire()
 {
+    return std::make_unique<CrossfireScript>();
+}
+
+void RegisterCrossfireTests()
+{
     TestHarness::RegisterSuite("fabled-crossfire",
         [] { return std::make_unique<CrossfireTestSuite>(); });
-    return std::make_unique<CrossfireScript>();
 }
 } // namespace Fabled

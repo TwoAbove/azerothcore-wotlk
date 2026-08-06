@@ -93,7 +93,8 @@ enum class Anchor : uint8
     Back,
     Finger,
     Trinket,
-    Weapon
+    Weapon,
+    Max
 };
 
 // The effect's home anchor: the only equipment family it can roll on or be
@@ -166,9 +167,10 @@ struct Settings
 };
 
 Settings const& GetSettings();
+Settings const& GetSettings(Player const* player);
+Settings& TestSettings(Player* player);
+void ClearTestSettings(Player* player);
 
-// Test support: suites may tweak knobs, restoring them on finish.
-Settings& MutableSettings();
 
 struct KeeperAuraState
 {
@@ -180,25 +182,44 @@ struct KeeperAuraState
 struct Runtime : public DataMap::Base
 {
     uint16 mask = 0;                         // EffectBit() of equipped effects
-    bool indomitableReady = false;
+    std::unique_ptr<Settings> testSettings;  // TestHarness actor-only override.
 
-    uint64 ghostwalkFadeAtMs = 0;            // 0 = not armed
+    struct IndomitableState
+    {
+        bool ready = false;
+    } indomitable;
 
+    struct GhostwalkState
+    {
+        uint64 fadeAtMs = 0;
+    } ghostwalk;
 
-    std::vector<KeeperAuraState> keeperManaged;
+    struct KeeperState
+    {
+        std::vector<KeeperAuraState> managed;
+    } keeper;
 
-    uint64 vengefulPhaseEndMs = 0;
-    bool vengefulPhaseActive = false;
+    struct VengefulGhostState
+    {
+        uint64 phaseEndMs = 0;
+        bool phaseActive = false;
+    } vengefulGhost;
 
-    ObjectGuid crossfirePreviousTarget;
-    ObjectGuid crossfireCurrentTarget;
+    struct CrossfireState
+    {
+        ObjectGuid previousTarget;
+        ObjectGuid currentTarget;
+    } crossfire;
 
-    uint64 overkillBank = 0;
-    uint64 overkillExpiresMs = 0;
-    SpellSchoolMask overkillSchoolMask = SPELL_SCHOOL_MASK_NONE;
-    ObjectGuid overkillPendingTarget;
-    uint64 overkillPendingDamage = 0;
-    SpellSchoolMask overkillPendingSchoolMask = SPELL_SCHOOL_MASK_NONE;
+    struct OverkillState
+    {
+        uint64 bank = 0;
+        uint64 expiresMs = 0;
+        SpellSchoolMask schoolMask = SPELL_SCHOOL_MASK_NONE;
+        ObjectGuid pendingTarget;
+        uint64 pendingDamage = 0;
+        SpellSchoolMask pendingSchoolMask = SPELL_SCHOOL_MASK_NONE;
+    } overkill;
 
     // Test support: pull every pending deadline closer by ms. A deadline that
     // would land in the past becomes 1 (elapsed); zero stays zero (inactive).
@@ -259,7 +280,7 @@ public:
     virtual bool CanAttackWhileMounted(Player* /*player*/, Runtime& /*runtime*/, Unit* /*victim*/, bool /*meleeAttack*/) { return false; }
     virtual bool CanUseGameObjectWhileMounted(Player* /*player*/, Runtime& /*runtime*/, GameObject* /*gameObject*/) { return false; }
 
-    // Combat state transitions, derived from the update tick.
+    // Native player combat state transitions.
     virtual void OnCombatEnter(Player* /*player*/, Runtime& /*runtime*/) { }
     virtual void OnCombatExit(Player* /*player*/, Runtime& /*runtime*/) { }
 
@@ -271,8 +292,7 @@ private:
     Effect _effect;
 };
 
-// One factory per fabled_<name>.cpp. Each factory also registers its
-// test-harness suite ("fabled-<name>") before returning.
+// One production factory and one explicit test registration entry point per effect.
 std::unique_ptr<Script> MakeImpact();
 std::unique_ptr<Script> MakePremonition();
 std::unique_ptr<Script> MakeMomentum();
@@ -289,8 +309,24 @@ std::unique_ptr<Script> MakeWarcaster();
 std::unique_ptr<Script> MakeIndomitable();
 void RegisterVengefulGhostSpellScripts();
 void RegisterBloodMagicSpellScripts();
+void RegisterImpactTests();
+void RegisterPremonitionTests();
+void RegisterMomentumTests();
+void RegisterGhostwalkTests();
+void RegisterCavalierTests();
+void RegisterKeeperTests();
+void RegisterVengefulGhostTests();
+void RegisterCrossfireTests();
+void RegisterAlchemistsGutTests();
+void RegisterLeviathansGiftTests();
+void RegisterOverkillTests();
+void RegisterBloodMagicTests();
+void RegisterWarcasterTests();
+void RegisterIndomitableTests();
 
 // Dispatcher API used by tertiary_stats.cpp.
+void RegisterScripts();
+void RegisterTests();
 void LoadSettings();
 bool ValidateSpells();                       // startup DBC check; latches readiness
 Runtime* FindRuntime(Player* player);
@@ -301,6 +337,8 @@ void CastEffectDamage(Player* attacker, Unit* victim, uint64 amount,
 Runtime& GetRuntime(Player* player);
 void SetMask(Player* player, uint16 mask);   // from equipment refresh
 void HandleUpdate(Player* player, uint32 diffMs);
+void HandleCombatEnter(Player* player);
+void HandleCombatExit(Player* player);
 void HandleKill(Player* killer, Unit* victim);
 void HandleBeforeDealtDamage(Player* attacker, Unit* victim, uint32 damage,
     SpellInfo const* spellInfo, DamageKind kind);
