@@ -2962,6 +2962,7 @@ public:
                 "DELETE FROM `item_refund_instance` WHERE `item_guid` = {}", rollbackSourceGuid.GetCounter());
             CharacterDatabase.DirectExecute(
                 "DELETE FROM `item_soulbound_trade_data` WHERE `itemGuid` = {}", rollbackSourceGuid.GetCounter());
+            rollbackSource->RemoveFromWorld();
             CharacterDatabaseTransaction fixtureCleanup = CharacterDatabase.BeginTransaction();
             actor->SaveInventoryAndGoldToDB(fixtureCleanup);
             CharacterDatabase.AsyncCommitTransaction(fixtureCleanup).m_future.get();
