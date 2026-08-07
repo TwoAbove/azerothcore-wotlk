@@ -3160,8 +3160,12 @@ public:
             actor->SetHealth(std::max<uint32>(1, actor->GetMaxHealth() / 2));
             uint32 healthBeforeProcDisabledSiphon = actor->GetHealth();
             uint32 targetHealthBefore = dummy->GetHealth();
-            actor->CastSpell(dummy, procDisabledSpell->Id,
+            Spell procDisabledCast(actor, procDisabledSpell,
                 TriggerCastFlags(TRIGGERED_FULL_MASK | TRIGGERED_DISALLOW_PROC_EVENTS));
+            SpellNonMeleeDamage procDisabledDamage(
+                actor, dummy, procDisabledSpell, procDisabledSpell->GetSchoolMask());
+            procDisabledDamage.damage = 100;
+            actor->DealSpellDamage(&procDisabledDamage, false, &procDisabledCast);
             context.Expect(dummy->GetHealth() < targetHealthBefore,
                 "proc-disabled class spell deals damage");
             context.Expect(actor->GetHealth() > healthBeforeProcDisabledSiphon,
