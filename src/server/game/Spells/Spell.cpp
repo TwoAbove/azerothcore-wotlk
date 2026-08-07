@@ -2826,7 +2826,7 @@ void Spell::DoAllEffectOnTarget(TargetInfo* target)
         SpellNonMeleeDamage damageInfo(caster, unitTarget, m_spellInfo, m_spellSchoolMask);
 
         // Check damage immunity
-        if (unitTarget->IsImmunedToDamage(caster, m_spellInfo))
+        if (unitTarget->IsImmunedToDamage(caster, m_spellInfo, m_spellSchoolMask))
         {
             m_damage = 0;
 
@@ -2997,7 +2997,9 @@ SpellMissInfo Spell::DoSpellHitOnUnit(Unit* unit, uint32 effectMask, bool scaleA
         return SPELL_MISS_EVADE;
 
     // For delayed spells immunity may be applied between missile launch and hit - check immunity for that case
-    if (m_spellInfo->Speed && ((m_damage > 0 && unit->IsImmunedToDamage(m_caster, m_spellInfo)) || unit->IsImmunedToSpell(m_spellInfo, this)))
+    if (m_spellInfo->Speed
+        && ((m_damage > 0 && unit->IsImmunedToDamage(m_caster, m_spellInfo, m_spellSchoolMask))
+            || unit->IsImmunedToSpell(m_spellInfo, this)))
     {
         return SPELL_MISS_IMMUNE;
     }

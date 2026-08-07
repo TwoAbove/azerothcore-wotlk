@@ -3735,7 +3735,8 @@ SpellMissInfo Unit::SpellHitResult(Unit* victim, Spell const* spell, bool CanRef
 
     // Damage immunity is only checked if the spell has damage effects, this immunity must not prevent aura apply
     // returns SPELL_MISS_IMMUNE in that case, for other spells, the SMSG_SPELL_GO must show hit
-    if (spellInfo->HasOnlyDamageEffects() && victim->IsImmunedToDamage(this, spellInfo))
+    if (spellInfo->HasOnlyDamageEffects()
+        && victim->IsImmunedToDamage(this, spellInfo, spell->GetSpellSchoolMask()))
         return SPELL_MISS_IMMUNE;
 
     if (this == victim)
@@ -9968,14 +9969,20 @@ bool Unit::IsImmunedToDamage(SpellSchoolMask schoolMask) const
 
 bool Unit::IsImmunedToDamage(Unit const* caster, SpellInfo const* spellInfo) const
 {
+    return IsImmunedToDamage(caster, spellInfo,
+        spellInfo ? spellInfo->GetSchoolMask() : SPELL_SCHOOL_MASK_NONE);
+}
+
+bool Unit::IsImmunedToDamage(Unit const* caster, SpellInfo const* spellInfo,
+    SpellSchoolMask spellSchoolMask) const
+{
     if (!spellInfo)
         return false;
 
     if (spellInfo->HasAttribute(SPELL_ATTR0_NO_IMMUNITIES) || spellInfo->HasAttribute(SPELL_ATTR2_NO_SCHOOL_IMMUNITIES))
         return false;
 
-    SpellSchoolMask schoolMask = SpellSchoolMask(spellInfo->GetSchoolMask());
-    if (schoolMask == SPELL_SCHOOL_MASK_NONE)
+    if (spellSchoolMask == SPELL_SCHOOL_MASK_NONE)
         return false;
 
     auto hasImmunity = [&](SpellImmuneContainer const& container)
@@ -9994,7 +10001,7 @@ bool Unit::IsImmunedToDamage(Unit const* caster, SpellInfo const* spellInfo) con
         }
 
         // We need to be immune to all types
-        return (schoolImmunityMask & schoolMask) == schoolMask;
+        return (schoolImmunityMask & spellSchoolMask) == spellSchoolMask;
     };
 
     // If m_immuneToSchool type contain this school type, IMMUNE damage.
