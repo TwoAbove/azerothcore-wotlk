@@ -165,13 +165,15 @@ def seconds(milliseconds):
 def spell_row(spell_id, name, icon_id, effects=(), auras=(), targets=(), duration=0,
               attributes=0, attributes_ex2=0, amplitudes=(), misc_values=(), misc_values_b=(),
               school=1, damage_class=0, visual=0, aura_tooltip="", range_index=0,
-              stack_amount=0, dispel=0, aura_interrupt_flags=0, attributes_ex3=0):
+              stack_amount=0, dispel=0, aura_interrupt_flags=0, attributes_ex3=0,
+              attributes_ex7=0):
     row = [0] * SPELL_FIELDS
     row[0] = spell_id
     row[2] = dispel
     row[4] = attributes
     row[6] = attributes_ex2
     row[7] = attributes_ex3
+    row[11] = attributes_ex7
     row[32] = aura_interrupt_flags
     row[40] = duration
     row[46] = range_index
@@ -206,6 +208,7 @@ def custom_spells(settings):
     cannot_crit = 0x20000000
     ignore_line_of_sight = 0x00000004
     suppress_damage_procs = 0x20030000
+    no_attack_miss = 0x02000000
     school_absorb_order_last = 1
     return [
         spell_row(82001, "Avoidance", 4501, (6,), (229,), (1,), 21, hidden_passive),
@@ -256,11 +259,11 @@ def custom_spells(settings):
                   aura_tooltip="$s1 damage remains and is dealt over the debuff's duration."),
         spell_row(82018, "Impact", 4501, (2,), (), (6,),
                   attributes_ex2=cannot_crit | ignore_line_of_sight,
-                  attributes_ex3=suppress_damage_procs,
+                  attributes_ex3=suppress_damage_procs, attributes_ex7=no_attack_miss,
                   school=1, damage_class=1, visual=784, range_index=1),
         spell_row(82019, "Crossfire", 4505, (2,), (), (6,),
                   attributes_ex2=cannot_crit | ignore_line_of_sight,
-                  attributes_ex3=suppress_damage_procs,
+                  attributes_ex3=suppress_damage_procs, attributes_ex7=no_attack_miss,
                   school=1, damage_class=1, visual=0, range_index=1),
         spell_row(82020, "Vengeful Ghost Exhaustion", 1654),
         spell_row(82021, "Tempo: Expedite", 4504, (6,), (4,), (1,), 31, cannot_cancel,
@@ -269,7 +272,7 @@ def custom_spells(settings):
                                 "has its cooldown reduced.")),
         spell_row(82022, "Overkill", 4505, (2,), (), (6,),
                   attributes_ex2=cannot_crit | ignore_line_of_sight,
-                  attributes_ex3=suppress_damage_procs,
+                  attributes_ex3=suppress_damage_procs, attributes_ex7=no_attack_miss,
                   school=1, damage_class=1, visual=0, range_index=1),
         spell_row(82023, "Vengeful Ghost", 1654, (6,), (69,), (1,), 21,
                   hidden_passive, misc_values=(127,), misc_values_b=(school_absorb_order_last,)),
