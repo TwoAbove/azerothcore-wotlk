@@ -2980,7 +2980,6 @@ public:
         {
             ObjectGuid deadAnchorGuid = deadEchoAnchor->GetGUID();
             ObjectGuid liveFallbackGuid = liveEchoFallback->GetGUID();
-            uint32 fallbackHealth = liveEchoFallback->GetHealth();
             actor->SetSelection(deadAnchorGuid);
             echoState->echoActive = true;
             echoState->echoEndsAtMs = GameTime::GetGameTimeMS().count();
@@ -2991,9 +2990,10 @@ public:
                 "Echo's recorded anchor despawns before release");
             context.Expect(context.Engage(liveFallbackGuid),
                 "Echo fallback remains engaged after its recorded anchor despawns");
+            context.ClearEvents();
             ProcessEcho(actor, *echoState);
-            liveEchoFallback = context.GetCreature(liveFallbackGuid);
-            context.Expect(liveEchoFallback && liveEchoFallback->GetHealth() < fallbackHealth,
+            context.Expect(context.FindEvent(TestHarness::EventType::Cast,
+                    actor->GetGUID(), liveFallbackGuid, SPELL_ECHO_DAMAGE) != nullptr,
                 "Echo falls back to another engaged enemy when its anchor is gone");
             actor->SetSelection(ObjectGuid::Empty);
         }
