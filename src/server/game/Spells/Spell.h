@@ -539,6 +539,7 @@ public:
     Item* m_CastItem;
     Item* m_weaponItem;
     ObjectGuid m_castItemGUID;
+    uint32 m_castItemEntry;
     uint8 m_cast_count;
     uint32 m_glyphIndex;
     uint32 m_preCastSpell;
@@ -618,6 +619,7 @@ public:
     [[nodiscard]] TriggerCastFlags GetTriggeredCastFlags() const { return _triggeredCastFlags; }
 
     [[nodiscard]] SpellSchoolMask GetSpellSchoolMask() const { return m_spellSchoolMask; }
+    [[nodiscard]] uint32 GetCastItemEntry() const { return m_castItemEntry; }
 
  protected:
     bool HasGlobalCooldown() const;
