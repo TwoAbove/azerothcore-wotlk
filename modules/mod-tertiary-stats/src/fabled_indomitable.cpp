@@ -18,6 +18,7 @@ namespace Fabled
 namespace
 {
 constexpr uint32 TEST_ROOT_SPELL = 339; // Entangling Roots (rank 1).
+constexpr uint32 TEST_SELF_STUN_SPELL = 3618; // Self Stun.
 constexpr uint32 TEST_STUN_SPELL = 853; // Hammer of Justice (rank 1).
 
 constexpr uint64 HARD_CONTROL_MECHANIC_MASK =
@@ -127,16 +128,17 @@ public:
 
         actor->CombatStop(true);
         actor->RemoveAurasDueToSpell(TEST_ROOT_SPELL);
+        actor->RemoveAurasDueToSpell(TEST_SELF_STUN_SPELL);
         actor->RemoveAurasDueToSpell(TEST_STUN_SPELL);
         _equipped = Test::EquipFabledTrinket(actor, Effect::Indomitable) != nullptr;
         context.Expect(_equipped && GetRuntime(actor).indomitable.ready,
             "Indomitable readies when equipped outside combat");
 
-        actor->CastSpell(actor, TEST_STUN_SPELL, true);
-        context.Expect(actor->HasAura(TEST_STUN_SPELL)
+        actor->CastSpell(actor, TEST_SELF_STUN_SPELL, true);
+        context.Expect(actor->HasAura(TEST_SELF_STUN_SPELL)
                 && GetRuntime(actor).indomitable.ready,
-            "friendly control does not block or consume the charge");
-        actor->RemoveAurasDueToSpell(TEST_STUN_SPELL);
+            "self control does not block or consume the charge");
+        actor->RemoveAurasDueToSpell(TEST_SELF_STUN_SPELL);
 
         Creature* dummy = context.SpawnDummy(3.0f, 0.0f);
         context.Expect(dummy && context.Engage(dummy->GetGUID()),
@@ -219,6 +221,7 @@ private:
         if (Player* actor = context.GetActor())
         {
             actor->RemoveAurasDueToSpell(TEST_ROOT_SPELL);
+            actor->RemoveAurasDueToSpell(TEST_SELF_STUN_SPELL);
             actor->RemoveAurasDueToSpell(TEST_STUN_SPELL);
             actor->CombatStop(true);
             if (_equipped)
