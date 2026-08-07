@@ -555,7 +555,7 @@ void CharacterDatabaseConnection::DoPrepareStatements()
 
     // Items that hold loot or money
     PrepareStatement(CHAR_SEL_ITEMCONTAINER_ITEMS, "SELECT containerGUID, itemid, item_index, count, randomPropertyId, randomSuffix, bonusSeed, follow_loot_rules, freeforall, is_blocked, is_counted, is_underthreshold, needs_quest, conditionLootId FROM item_loot_storage", CONNECTION_SYNCH);
-    PrepareStatement(CHAR_UPD_ITEMCONTAINER_BONUS_SEED, "UPDATE item_loot_storage SET bonusSeed = ? WHERE containerGUID = ? AND itemid = ? AND item_index = ? AND bonusSeed = 0", CONNECTION_ASYNC);
+    PrepareStatement(CHAR_UPD_ITEMCONTAINER_BONUS_SEED, "UPDATE item_loot_storage SET bonusSeed = ? WHERE containerGUID = ? AND itemid = ? AND item_index = ? AND bonusSeed = 0", CONNECTION_BOTH);
     PrepareStatement(CHAR_DEL_ITEMCONTAINER_SINGLE_ITEM, "DELETE FROM item_loot_storage WHERE containerGUID = ? AND itemid = ? AND count = ? AND item_index = ? LIMIT 1", CONNECTION_ASYNC);
     PrepareStatement(CHAR_INS_ITEMCONTAINER_SINGLE_ITEM, "INSERT INTO item_loot_storage (containerGUID, itemid, item_index, count, randomPropertyId, randomSuffix, bonusSeed, follow_loot_rules, freeforall, is_blocked, is_counted, is_underthreshold, needs_quest, conditionLootId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", CONNECTION_ASYNC);
     PrepareStatement(CHAR_DEL_ITEMCONTAINER_CONTAINER, "DELETE FROM item_loot_storage WHERE containerGUID = ?", CONNECTION_ASYNC);
