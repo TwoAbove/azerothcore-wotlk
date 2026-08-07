@@ -637,6 +637,7 @@ Spell::Spell(Unit* caster, SpellInfo const* info, TriggerCastFlags triggerFlags,
         _triggeredCastFlags = TriggerCastFlags(uint32(_triggeredCastFlags) | TRIGGERED_IGNORE_CAST_IN_PROGRESS | TRIGGERED_CAST_DIRECTLY);
 
     m_CastItem = nullptr;
+    m_castItemEntry = 0;
 
     unitTarget = nullptr;
     itemTarget = nullptr;
@@ -3464,10 +3465,12 @@ SpellCastResult Spell::prepare(SpellCastTargets const* targets, AuraEffect const
     if (m_CastItem)
     {
         m_castItemGUID = m_CastItem->GetGUID();
+        m_castItemEntry = m_CastItem->GetEntry();
     }
     else
     {
         m_castItemGUID = ObjectGuid::Empty;
+        m_castItemEntry = 0;
     }
 
     InitExplicitTargets(*targets);

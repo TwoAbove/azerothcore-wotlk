@@ -82,8 +82,8 @@ public:
 
     void OnSpellCastComplete(Player* player, Runtime& /*runtime*/, Spell* spell) override
     {
-        Item* castItem = spell ? spell->m_CastItem : nullptr;
-        ItemTemplate const* itemTemplate = castItem ? castItem->GetTemplate() : nullptr;
+        ItemTemplate const* itemTemplate = spell
+            ? sObjectMgr->GetItemTemplate(spell->GetCastItemEntry()) : nullptr;
         if (!itemTemplate || itemTemplate->Class != ITEM_CLASS_CONSUMABLE
             || itemTemplate->SubClass != ITEM_SUBCLASS_POTION)
             return;
@@ -244,6 +244,20 @@ public:
             return;
         }
 
+        if (_stage == Stage::AwaitOutOfCombatDrink)
+        {
+            Aura* aura = actor->GetAura(SPELL_TOXICITY);
+            if ((!aura || aura->GetStackAmount() != 1) && _elapsedMs < 1500)
+                return;
+
+            context.Expect(aura && aura->GetStackAmount() == 1
+                    && actor->GetItemCount(TEST_POTION_ITEM) == _baselinePotionCount
+                    && actor->GetLastPotionId() == 0,
+                "an out-of-combat potion also applies Toxicity and clears its cooldown");
+            Finish(context);
+            return;
+        }
+
         if (_stage != Stage::AwaitToxicityTick || _elapsedMs < 3400)
             return;
 
@@ -253,7 +267,15 @@ public:
             "Toxicity ticks for five percent max health per stack",
             "lost=" + std::to_string(healthLost)
                 + " expected=" + std::to_string(_expectedTickDamage));
-        Finish(context);
+
+        actor->RemoveAurasDueToSpell(SPELL_TOXICITY);
+        context.DespawnAllDummies();
+        bool added = actor->AddItem(TEST_POTION_ITEM, 1);
+        actor->SetHealth(std::max<uint32>(1, actor->GetMaxHealth() / 4));
+        context.Expect(!actor->IsInCombat() && added && Drink(actor, 2),
+            "out-of-combat potion item-use dispatched");
+        _stage = Stage::AwaitOutOfCombatDrink;
+        _elapsedMs = 0;
     }
 
     void Cancel(TestHarness::Context& context) override
@@ -268,6 +290,7 @@ private:
         AwaitFirstDrink,
         AwaitSecondDrink,
         AwaitToxicityTick,
+        AwaitOutOfCombatDrink,
         Done
     };
 
