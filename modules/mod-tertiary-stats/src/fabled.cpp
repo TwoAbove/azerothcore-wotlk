@@ -164,6 +164,10 @@ std::span<Effect const> EffectPoolFor(Anchor anchor)
         Pools result;
         for (EffectDescriptor const& descriptor : EFFECTS)
             result[uint8(descriptor.anchor)].push_back(descriptor.effect);
+        // Pool order is part of deterministic bonus generation.
+        result[uint8(Anchor::Finger)] = {
+            Effect::Crossfire, Effect::Momentum, Effect::Warcaster, Effect::BloodMagic
+        };
         return result;
     }();
 
