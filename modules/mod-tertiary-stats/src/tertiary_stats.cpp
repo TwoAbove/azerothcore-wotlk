@@ -2890,7 +2890,7 @@ public:
             actor->SetMoney(expectedReforgeCost + 12345);
             CharacterDatabaseTransaction fixtureTransaction = CharacterDatabase.BeginTransaction();
             actor->SaveInventoryAndGoldToDB(fixtureTransaction);
-            CharacterDatabase.DirectCommitTransaction(fixtureTransaction);
+            CharacterDatabase.AsyncCommitTransaction(fixtureTransaction).m_future.get();
             CharacterDatabase.DirectExecute(
                 "REPLACE INTO `item_refund_instance` (`item_guid`, `player_guid`, `paidMoney`, `paidExtendedCost`) VALUES ({}, {}, 123, 0)",
                 reforgeSourceGuid.GetCounter(), actor->GetGUID().GetCounter());
@@ -2927,7 +2927,7 @@ public:
             rollbackSource->SetSoulboundTradeable(rollbackAllowedLooters);
             CharacterDatabaseTransaction fixtureSave = CharacterDatabase.BeginTransaction();
             actor->SaveInventoryAndGoldToDB(fixtureSave);
-            CharacterDatabase.DirectCommitTransaction(fixtureSave);
+            CharacterDatabase.AsyncCommitTransaction(fixtureSave).m_future.get();
             CharacterDatabase.DirectExecute(
                 "REPLACE INTO `item_refund_instance` (`item_guid`, `player_guid`, `paidMoney`, `paidExtendedCost`) VALUES ({}, {}, 1, 0)",
                 rollbackSourceGuid.GetCounter(), actor->GetGUID().GetCounter());
@@ -2952,7 +2952,7 @@ public:
                 "DELETE FROM `item_soulbound_trade_data` WHERE `itemGuid` = {}", rollbackSourceGuid.GetCounter());
             CharacterDatabaseTransaction fixtureCleanup = CharacterDatabase.BeginTransaction();
             actor->SaveInventoryAndGoldToDB(fixtureCleanup);
-            CharacterDatabase.DirectCommitTransaction(fixtureCleanup);
+            CharacterDatabase.AsyncCommitTransaction(fixtureCleanup).m_future.get();
         }
 
 
