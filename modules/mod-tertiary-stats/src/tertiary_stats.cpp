@@ -2827,7 +2827,11 @@ public:
         context.Expect(generatedHeirloom && TertiaryBonusOf(generatedHeirloom)
                 && HeirloomProfileFromSeed(generatedHeirloom->GetBonusSeed()) == HeirloomProfile::Trinket,
             "heirlooms remain explicitly eligible when ordinary quality eligibility ends at epic");
-        delete generatedHeirloom;
+        if (generatedHeirloom)
+        {
+            generatedHeirloom->RemoveFromWorld();
+            delete generatedHeirloom;
+        }
 
         Settings deterministicRollSettings = _settings;
         deterministicRollSettings.rollChance = 100.0f;
@@ -2844,7 +2848,11 @@ public:
                 && Fabled::EffectFromBonusId(TertiaryBonusOf(deterministicFabledItem))
                     == Fabled::Effect::Impact,
             "Fabled conversion chooses the effect assigned to the item's slot");
-        delete deterministicFabledItem;
+        if (deterministicFabledItem)
+        {
+            deterministicFabledItem->RemoveFromWorld();
+            delete deterministicFabledItem;
+        }
 
         Settings suffixRollSettings = _settings;
         suffixRollSettings.rollChance = 100.0f;
@@ -2865,7 +2873,11 @@ public:
             "property=" + std::to_string(suffixProperty)
                 + " suffix=" + std::to_string(suffixItem ? suffixItem->GetItemSuffixFactor() : 0)
                 + " seed=" + std::to_string(suffixSeed));
-        delete suffixItem;
+        if (suffixItem)
+        {
+            suffixItem->RemoveFromWorld();
+            delete suffixItem;
+        }
         bool sourceAdded = actor->AddItem(16957, 1);
         bool destinationAdded = actor->AddItem(12006, 1);
         Item* reforgeSource = sourceAdded ? actor->GetItemByEntry(16957) : nullptr;
