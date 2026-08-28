@@ -221,7 +221,7 @@ public:
         _settingsSaved = true;
         TestSettings(actor).SetKeeperExtraSpells({});
 
-        Item* item = Test::EquipFabledTrinket(actor, Effect::Keeper);
+        Item* item = Test::EquipFabled(actor, Effect::Keeper);
         context.Expect(item != nullptr, "Keeper fabled trinket equipped");
         if (!item)
         {
@@ -303,7 +303,7 @@ public:
                 && replacement->GetMaxDuration() == ordinaryMaxDuration,
             "unequipping releases current finite auras without replacing or removing them");
 
-        item = Test::EquipFabledTrinket(actor, Effect::Keeper);
+        item = Test::EquipFabled(actor, Effect::Keeper);
         _equipped = item != nullptr;
         context.Expect(item && IsTracked(runtime, elixir) && IsTracked(runtime, replacement),
             "equipment refresh discovers existing finite auras as relog does");

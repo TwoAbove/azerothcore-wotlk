@@ -97,7 +97,7 @@ public:
         if (dummy)
             _dummyGuid = dummy->GetGUID();
 
-        context.Expect(Test::EquipFabledTrinket(actor, Effect::Cavalier) != nullptr,
+        context.Expect(Test::EquipFabled(actor, Effect::Cavalier) != nullptr,
             "Cavalier trinket equipped");
 
         SpellInfo const* mountInfo = sSpellMgr->GetSpellInfo(SPELL_BROWN_HORSE);

@@ -1,5 +1,5 @@
 local ADDON_PREFIX = "TStats"
-local PROTOCOL_VERSION = "V1"
+local PROTOCOL_VERSION = "V2"
 local floor = math.floor
 local QTip = LibStub("LibQTip-1.0")
 
@@ -48,6 +48,23 @@ local FABLED_NAMES = {
     "Indomitable",
 }
 
+local FABLED_COMPATIBLE_SLOTS = {
+    [1] = { 8 },
+    [2] = { 13, 14 },
+    [3] = { 11, 12 },
+    [4] = { 15 },
+    [5] = { 7 },
+    [6] = { 5 },
+    [7] = { 13, 14 },
+    [8] = { 11, 12 },
+    [9] = { 13, 14 },
+    [10] = { 1 },
+    [11] = { 16, 17, 18 },
+    [12] = { 11, 12 },
+    [13] = { 11, 12 },
+    [14] = { 13, 14 },
+}
+
 
 
 local snapshot = {}
@@ -76,6 +93,13 @@ local fabledSettings = {
 }
 local fabledRows = {}
 local UpdateFabledRows
+local unlockedFabled = {}
+local attunedBySlot = {}
+local attunementGeneration = 0
+local rerollSettings = { enabled = true }
+local actionMenu
+local rerollButton
+local UpdateRerollButton
 
 
 
@@ -163,7 +187,7 @@ local function AddDefinitionRows(tooltip, definition)
     end
     if definition.fabled then
         AddSpanningLine(
-            tooltip, FABLED_POWER_COLOR .. "+ " ..
+            tooltip, FABLED_POWER_COLOR .. "Fabled: " ..
                 FABLED_NAMES[definition.fabled] .. COLOR_END)
     end
     for _, powerIndex in ipairs(definition.powers) do
@@ -185,6 +209,18 @@ end
 
 local function HasDefinition(definition)
     return definition and (definition.fabled or #definition.powers > 0)
+end
+
+local function ComparisonDefinition(definition, slot, candidate)
+    local activeFabled = attunedBySlot[slot]
+    if candidate and definition and definition.fabled then
+        activeFabled = definition.fabled
+    end
+    return {
+        fabled = activeFabled,
+        points = definition and definition.points or 0,
+        powers = activeFabled and {} or (definition and definition.powers or {}),
+    }
 end
 
 local function AddComparisonRows(tooltip, candidateDefinition, equippedDefinition)
@@ -257,7 +293,7 @@ local function RenderTertiarySidecar(tooltip)
     if candidateSlots then
         for _, slot in ipairs(candidateSlots) do
             if HasDefinition(candidateDefinition) or
-                HasDefinition(equippedDefinitions[slot]) then
+                    HasDefinition(equippedDefinitions[slot]) or attunedBySlot[slot] then
                 hasComparison = true
                 break
             end
@@ -281,12 +317,14 @@ local function RenderTertiarySidecar(tooltip)
         if candidateSlots then
             for _, slot in ipairs(candidateSlots) do
                 local equippedDefinition = equippedDefinitions[slot]
-                if HasDefinition(equippedDefinition) then
+                local activeDefinition = ComparisonDefinition(
+                    equippedDefinition, slot, false)
+                if HasDefinition(activeDefinition) then
                     sidecar:AddSeparator(1, 0.35, 0.35, 0.35, 1)
                     AddSpanningLine(
                         sidecar, "Currently equipped: " ..
                             (EQUIPMENT_SLOT_LABELS[slot] or ("slot " .. slot)), true)
-                    AddDefinitionRows(sidecar, equippedDefinition)
+                    AddDefinitionRows(sidecar, activeDefinition)
                 end
             end
         end
@@ -303,14 +341,18 @@ local function RenderTertiarySidecar(tooltip)
     if candidateSlots then
         for _, slot in ipairs(candidateSlots) do
             local equippedDefinition = equippedDefinitions[slot]
-            if HasDefinition(candidateDefinition) or HasDefinition(equippedDefinition) then
+            local candidateComparison = ComparisonDefinition(
+                candidateDefinition, slot, true)
+            local equippedComparison = ComparisonDefinition(
+                equippedDefinition, slot, false)
+            if HasDefinition(candidateComparison) or HasDefinition(equippedComparison) then
                 if sidecar:GetLineCount() > 0 then
                     sidecar:AddSeparator(1, 0.35, 0.35, 0.35, 1)
                 end
                 AddSpanningLine(
                     sidecar, "Compared with " ..
                         (EQUIPMENT_SLOT_LABELS[slot] or ("slot " .. slot)), true)
-                AddComparisonRows(sidecar, candidateDefinition, equippedDefinition)
+                AddComparisonRows(sidecar, candidateComparison, equippedComparison)
             end
         end
     end
@@ -649,13 +691,9 @@ local function RefreshLocalRawPoints()
         end
     end
 
-    local activeFabled = {}
     for slot = 1, 19 do
         local definition = equippedDefinitions[slot]
-        if definition then
-            if definition.fabled then
-                activeFabled[definition.fabled] = true
-            end
+        if definition and not attunedBySlot[slot] then
             for _, powerIndex in ipairs(definition.powers) do
                 snapshot[powerIndex].raw = snapshot[powerIndex].raw + definition.points
             end
@@ -663,7 +701,7 @@ local function RefreshLocalRawPoints()
     end
     UpdateCharacterRows()
     if UpdateFabledRows then
-        UpdateFabledRows(activeFabled)
+        UpdateFabledRows()
     end
 end
 
@@ -695,6 +733,176 @@ end
 
 local function RequestInventorySnapshot()
     QueueProtocolRequest("I")
+end
+
+local function CurrentFabledSlot(effect)
+    for slot = 1, 19 do
+        if attunedBySlot[slot] == effect then
+            return slot
+        end
+    end
+end
+
+local function ShowFabledAttunementMenu(row)
+    local effect = row.fabledIndex
+    if not effect or not unlockedFabled[effect] then
+        return
+    end
+    if not actionMenu then
+        actionMenu = CreateFrame(
+            "Frame", "TertiaryStatsActionMenu", UIParent, "UIDropDownMenuTemplate")
+    end
+
+    local menu = {
+        {
+            text = FABLED_NAMES[effect],
+            isTitle = true,
+            notCheckable = true,
+        },
+    }
+    for _, slot in ipairs(FABLED_COMPATIBLE_SLOTS[effect] or {}) do
+        local selectedEffect = effect
+        local selectedSlot = slot
+        menu[#menu + 1] = {
+            text = EQUIPMENT_SLOT_LABELS[selectedSlot] or ("Slot " .. selectedSlot),
+            checked = attunedBySlot[selectedSlot] == selectedEffect,
+            func = function()
+                SendProtocolRequest(
+                    "A:" .. tostring(selectedEffect) .. ":" .. tostring(selectedSlot))
+            end,
+        }
+    end
+
+    local currentSlot = CurrentFabledSlot(effect)
+    if currentSlot then
+        local selectedSlot = currentSlot
+        menu[#menu + 1] = {
+            text = "Clear attunement",
+            notCheckable = true,
+            func = function()
+                SendProtocolRequest("A:0:" .. tostring(selectedSlot))
+            end,
+        }
+    end
+    EasyMenu(menu, actionMenu, "cursor", 0, 0, "MENU")
+end
+
+
+StaticPopupDialogs["TERTIARY_STATS_CONFIRM_REROLL"] = {
+    text = "Reroll the ordinary tertiary powers on %s for %s?\n\n"
+        .. "The number of lines and any Fabled provenance will be preserved.",
+    button1 = ACCEPT,
+    button2 = CANCEL,
+    OnAccept = function(_, data)
+        if data and data.request then
+            SendProtocolRequest("R:" .. data.request)
+        end
+    end,
+    timeout = 0,
+    whileDead = 0,
+    hideOnEscape = 1,
+    exclusive = 1,
+    preferredIndex = 3,
+}
+
+local function ConfirmReroll(request, itemLink, cost)
+    StaticPopup_Show(
+        "TERTIARY_STATS_CONFIRM_REROLL",
+        itemLink or "this item",
+        GetCoinTextureString(cost),
+        { request = request })
+end
+
+local function HasRerollableItems()
+    for _, definition in pairs(equippedDefinitions) do
+        if definition and #definition.powers > 0 then
+            return true
+        end
+    end
+    for _, definition in pairs(bagDefinitions) do
+        if definition and #definition.powers > 0 then
+            return true
+        end
+    end
+    return false
+end
+
+UpdateRerollButton = function()
+    if not rerollButton then
+        return
+    end
+    if rerollSettings.enabled and HasRerollableItems() then
+        rerollButton:Enable()
+    else
+        rerollButton:Disable()
+    end
+end
+
+local function AddRerollMenuItem(menu, label, request, itemLink, cost)
+    if not itemLink or type(cost) ~= "number" then
+        return
+    end
+    local selectedRequest = request
+    local selectedLink = itemLink
+    local selectedCost = cost
+    menu[#menu + 1] = {
+        text = label .. ": " .. itemLink .. "  " .. GetCoinTextureString(cost),
+        notCheckable = true,
+        disabled = GetMoney() < cost,
+        func = function()
+            ConfirmReroll(selectedRequest, selectedLink, selectedCost)
+        end,
+    }
+end
+
+local function ShowRerollMenu()
+    if not rerollSettings.enabled then
+        return
+    end
+    if not actionMenu then
+        actionMenu = CreateFrame(
+            "Frame", "TertiaryStatsActionMenu", UIParent, "UIDropDownMenuTemplate")
+    end
+
+    local menu = {
+        {
+            text = "Reroll ordinary tertiary powers",
+            isTitle = true,
+            notCheckable = true,
+        },
+    }
+    for slot = 1, 19 do
+        local definition = equippedDefinitions[slot]
+        if definition and #definition.powers > 0 then
+            AddRerollMenuItem(
+                menu,
+                EQUIPMENT_SLOT_LABELS[slot] or ("Slot " .. slot),
+                "E:" .. tostring(slot),
+                GetInventoryItemLink("player", slot),
+                definition.rerollCost)
+        end
+    end
+    for bag = 0, 4 do
+        for slot = 1, GetContainerNumSlots(bag) do
+            local definition = bagDefinitions[BagKey(bag, slot)]
+            if definition and #definition.powers > 0 then
+                AddRerollMenuItem(
+                    menu,
+                    "Bag " .. tostring(bag) .. ", slot " .. tostring(slot),
+                    "B:" .. tostring(bag) .. ":" .. tostring(slot),
+                    GetContainerItemLink(bag, slot),
+                    definition.rerollCost)
+            end
+        end
+    end
+    if #menu == 1 then
+        menu[#menu + 1] = {
+            text = "No rerollable items",
+            disabled = true,
+            notCheckable = true,
+        }
+    end
+    EasyMenu(menu, actionMenu, "cursor", 0, 0, "MENU")
 end
 
 local PANE_TOOLTIP_WIDTH = 320
@@ -781,10 +989,22 @@ end
 
 local function ShowFabledRowTooltip(row)
     local index = row.fabledIndex
+    local currentSlot = CurrentFabledSlot(index)
+    local status
+    if currentSlot then
+        local label = EQUIPMENT_SLOT_LABELS[currentSlot] or ("Slot " .. currentSlot)
+        status = GetInventoryItemLink("player", currentSlot)
+            and ("Active in " .. label .. ".")
+            or ("Attuned to " .. label .. "; inactive while that slot is empty.")
+    else
+        status = "Learned, but not attuned."
+    end
+
     local tooltip = GetPaneTooltip()
     tooltip.title:SetText(FABLED_NAMES[index])
     tooltip.title:SetTextColor(0.76, 0.38, 1.0)
-    tooltip.description:SetText(FabledDescription(index))
+    tooltip.description:SetText(
+        FabledDescription(index) .. "\n\n" .. status .. " Click to change attunement.")
     tooltip:SetHeight(28 + tooltip.title:GetHeight() + tooltip.description:GetHeight())
     tooltip:ClearAllPoints()
     tooltip:SetPoint("TOPLEFT", row, "TOPRIGHT", 8, 0)
@@ -794,8 +1014,8 @@ end
 local function CreateFabledRow(parent, position)
     local row = CreateFrame("Frame", nil, parent)
     row:SetHeight(20)
-    row:SetPoint("TOPLEFT", 12, -206 - (position - 1) * 22)
-    row:SetPoint("TOPRIGHT", -12, -206 - (position - 1) * 22)
+    row:SetPoint("TOPLEFT", 12, -238 - (position - 1) * 22)
+    row:SetPoint("TOPRIGHT", -12, -238 - (position - 1) * 22)
     row:EnableMouse(true)
 
     local background = row:CreateTexture(nil, "BACKGROUND")
@@ -806,28 +1026,49 @@ local function CreateFabledRow(parent, position)
 
     row.label = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     row.label:SetPoint("LEFT", 7, 0)
-    row.label:SetPoint("RIGHT", -7, 0)
+    row.label:SetPoint("RIGHT", -88, 0)
     row.label:SetJustifyH("LEFT")
-    row.label:SetTextColor(0.76, 0.38, 1.0)
+
+    row.value = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    row.value:SetPoint("RIGHT", -7, 0)
+    row.value:SetJustifyH("RIGHT")
 
     row:SetScript("OnEnter", ShowFabledRowTooltip)
     row:SetScript("OnLeave", function() GetPaneTooltip():Hide() end)
+    row:SetScript("OnMouseUp", function(self, button)
+        if button == "LeftButton" then
+            ShowFabledAttunementMenu(self)
+        end
+    end)
     row:Hide()
     return row
 end
 
-UpdateFabledRows = function(activeFabled)
+UpdateFabledRows = function()
     if not characterPanel then
         return
     end
 
     local visible = 0
     for fabledIndex = 1, #FABLED_NAMES do
-        if activeFabled[fabledIndex] then
+        if unlockedFabled[fabledIndex] then
             visible = visible + 1
             local row = fabledRows[visible]
+            local currentSlot = CurrentFabledSlot(fabledIndex)
+            local active = currentSlot
+                and GetInventoryItemLink("player", currentSlot) ~= nil
             row.fabledIndex = fabledIndex
             row.label:SetText(FABLED_NAMES[fabledIndex])
+            row.value:SetText(currentSlot
+                and (EQUIPMENT_SLOT_LABELS[currentSlot] or ("Slot " .. currentSlot))
+                or "Not attuned")
+            if active then
+                row.label:SetTextColor(0.76, 0.38, 1.0)
+                row.value:SetTextColor(0.76, 0.38, 1.0)
+            else
+                row.label:SetTextColor(0.48, 0.36, 0.58)
+                row.value:SetTextColor(0.55, 0.55, 0.55)
+            end
             row:Show()
         end
     end
@@ -835,7 +1076,7 @@ UpdateFabledRows = function(activeFabled)
         fabledRows[position]:Hide()
     end
 
-    characterPanel:SetHeight(214 + visible * 22)
+    characterPanel:SetHeight(246 + visible * 22)
 end
 
 local function InstallCharacterPanel()
@@ -844,8 +1085,8 @@ local function InstallCharacterPanel()
     end
 
     characterPanel = CreateFrame("Frame", "TertiaryStatsCharacterPanel", CharacterFrame)
-    characterPanel:SetWidth(190)
-    characterPanel:SetHeight(214)
+    characterPanel:SetWidth(250)
+    characterPanel:SetHeight(246)
     characterPanel:SetPoint("TOPLEFT", CharacterFrame, "TOPRIGHT", -18, -62)
     characterPanel:SetFrameStrata("HIGH")
     characterPanel:SetClampedToScreen(true)
@@ -862,7 +1103,7 @@ local function InstallCharacterPanel()
 
     local title = characterPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     title:SetPoint("TOP", 0, -11)
-    title:SetText("Tertiary Stats")
+    title:SetText("Tertiary Stats & Fabled Memories")
 
 
     for position = 1, #FABLED_NAMES do
@@ -872,6 +1113,25 @@ local function InstallCharacterPanel()
     for index = 1, #POWER_NAMES do
         rows[index] = CreateCharacterRow(characterPanel, index)
     end
+
+    rerollButton = CreateFrame(
+        "Button", "TertiaryStatsRerollButton", characterPanel, "UIPanelButtonTemplate")
+    rerollButton:SetHeight(22)
+    rerollButton:SetPoint("TOPLEFT", 12, -204)
+    rerollButton:SetPoint("TOPRIGHT", -12, -204)
+    rerollButton:SetText("Reroll Tertiary Powers")
+    rerollButton:SetScript("OnClick", ShowRerollMenu)
+    rerollButton:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Reroll ordinary tertiary powers", 1.0, 0.82, 0.25)
+        GameTooltip:AddLine(
+            "Choose an equipped or carried item. The number of power lines and "
+                .. "any Fabled provenance are preserved.",
+            0.9, 0.9, 0.9, true)
+        GameTooltip:Show()
+    end)
+    rerollButton:SetScript("OnLeave", GameTooltip_Hide)
+    UpdateRerollButton()
 
     characterPanel:SetScript("OnShow", RequestSnapshot)
     characterPanel:SetScript("OnHide", function()
@@ -904,36 +1164,34 @@ local function ProtocolInteger(value, minimum, maximum)
 end
 
 local function ParseItemDefinition(fields, firstField)
-    local kind = fields[firstField]
-    if kind == "F" then
-        local effect = ProtocolInteger(fields[firstField + 1], 1, #FABLED_NAMES)
-        if effect and firstField + 1 == #fields then
-            return { fabled = effect, points = 0, powers = {} }
-        end
-        return nil
-    end
-    if kind ~= "O" then
+    if fields[firstField] ~= "D" or firstField + 3 ~= #fields then
         return nil
     end
 
-    local points = ProtocolInteger(fields[firstField + 1], 1, 1000000)
-    if not points then
+    local points = ProtocolInteger(fields[firstField + 1], 0, 1000000)
+    local mask = ProtocolInteger(fields[firstField + 2], 0, 127)
+    local effect = ProtocolInteger(fields[firstField + 3], 0, #FABLED_NAMES)
+    if not points or not mask or not effect
+            or (mask == 0 and points ~= 0)
+            or (mask ~= 0 and points == 0) then
         return nil
     end
+
     local powers = {}
-    local seen = {}
-    for fieldIndex = firstField + 2, #fields do
-        local wireIndex = ProtocolInteger(fields[fieldIndex], 0, #POWER_NAMES - 1)
-        if not wireIndex or seen[wireIndex] or #powers == 3 then
-            return nil
+    for wireIndex = 0, #POWER_NAMES - 1 do
+        if floor(mask / (2 ^ wireIndex)) % 2 == 1 then
+            powers[#powers + 1] = wireIndex + 1
         end
-        seen[wireIndex] = true
-        powers[#powers + 1] = wireIndex + 1
     end
-    if #powers == 0 then
+    if #powers > 3 or (#powers == 0 and effect == 0) then
         return nil
     end
-    return { points = points, powers = powers }
+
+    return {
+        fabled = effect > 0 and effect or nil,
+        points = points,
+        powers = powers,
+    }
 end
 
 local inventoryFrameGeneration
@@ -943,6 +1201,9 @@ local lootFrameGeneration
 local lootFrameDefinitions
 local auctionFrameGenerations = { [0] = nil, [1] = nil, [2] = nil }
 local auctionFrameDefinitions = { [0] = nil, [1] = nil, [2] = nil }
+local attunementFrameGeneration
+local attunementFrameUnlocked
+local attunementFrameSlots
 
 local function HandleProtocolMessage(message)
     local fields = SplitProtocol(message)
@@ -962,6 +1223,58 @@ local function HandleProtocolMessage(message)
         return
     end
 
+    if fields[2] == "R" and fields[3] == "C" and #fields == 4 then
+        local enabled = ProtocolInteger(fields[4], 0, 1)
+        if enabled then
+            rerollSettings.enabled = enabled == 1
+            if UpdateRerollButton then
+                UpdateRerollButton()
+            end
+        end
+        return
+    end
+
+    if fields[2] == "M" then
+        local action = fields[3]
+        local generation = ProtocolInteger(fields[4], 1, 4294967295)
+        if action == "C" and generation and #fields == 4 then
+            if generation > attunementGeneration
+                    and (not attunementFrameGeneration
+                        or generation > attunementFrameGeneration) then
+                attunementFrameGeneration = generation
+                attunementFrameUnlocked = {}
+                attunementFrameSlots = {}
+            end
+        elseif action == "U" and generation == attunementFrameGeneration
+                and #fields == 5 then
+            local mask = ProtocolInteger(fields[5], 0, 65535)
+            if mask then
+                for effect = 1, #FABLED_NAMES do
+                    if floor(mask / (2 ^ (effect - 1))) % 2 == 1 then
+                        attunementFrameUnlocked[effect] = true
+                    end
+                end
+            end
+        elseif action == "S" and generation == attunementFrameGeneration
+                and #fields == 6 then
+            local slot = ProtocolInteger(fields[5], 1, 19)
+            local effect = ProtocolInteger(fields[6], 1, #FABLED_NAMES)
+            if slot and effect then
+                attunementFrameSlots[slot] = effect
+            end
+        elseif action == "D" and generation == attunementFrameGeneration
+                and #fields == 4 then
+            attunementGeneration = generation
+            unlockedFabled = attunementFrameUnlocked
+            attunedBySlot = attunementFrameSlots
+            attunementFrameGeneration = nil
+            attunementFrameUnlocked = nil
+            attunementFrameSlots = nil
+            RefreshLocalRawPoints()
+        end
+        return
+    end
+
     if fields[2] == "I" then
         local action = fields[3]
         local generation = ProtocolInteger(fields[4], 1, 4294967295)
@@ -974,15 +1287,19 @@ local function HandleProtocolMessage(message)
             end
         elseif action == "E" and generation == inventoryFrameGeneration then
             local slot = ProtocolInteger(fields[5], 1, 19)
-            local definition = slot and ParseItemDefinition(fields, 6)
+            local cost = ProtocolInteger(fields[6], 0, 2147483647)
+            local definition = slot and cost and ParseItemDefinition(fields, 7)
             if definition then
+                definition.rerollCost = cost
                 inventoryFrameEquippedDefinitions[slot] = definition
             end
         elseif action == "B" and generation == inventoryFrameGeneration then
             local bag = ProtocolInteger(fields[5], 0, 4)
             local slot = ProtocolInteger(fields[6], 1, 255)
-            local definition = bag and slot and ParseItemDefinition(fields, 7)
+            local cost = ProtocolInteger(fields[7], 0, 2147483647)
+            local definition = bag and slot and cost and ParseItemDefinition(fields, 8)
             if definition then
+                definition.rerollCost = cost
                 inventoryFrameBagDefinitions[BagKey(bag, slot)] = definition
             end
         elseif action == "D" and generation == inventoryFrameGeneration and #fields == 4 then
@@ -993,6 +1310,9 @@ local function HandleProtocolMessage(message)
             inventoryFrameEquippedDefinitions = nil
             RefreshLocalRawPoints()
             RefreshVisibleCachedTooltip()
+            if UpdateRerollButton then
+                UpdateRerollButton()
+            end
         end
         return
     end

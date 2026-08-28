@@ -2,11 +2,12 @@
  * mod-tertiary-stats
  *
  * Equipment acquired from loot, quests, professions, and vendors can receive
- * up to three custom tertiary powers. Each item instance stores one immutable
- * power selection independently of its native random affix. Ordinary equipment
- * stores a fixed point budget; heirlooms resolve their budget at the wearer's
- * level. Equipped point totals are converted once at the character's level. A
- * matching client addon renders tertiary tooltips and the character-sheet summary.
+ * up to three custom tertiary powers. Rerolls preserve the number of powers
+ * and only change their mask. Fabled provenance is stored independently and
+ * remains on the item after the character learns its effect. Heirlooms resolve
+ * their point budget at the wearer's level. Equipped point totals are converted
+ * once at the character's level. A matching client addon renders tertiary
+ * tooltips, attunements, rerolls, and the character-sheet summary.
  */
 
 #include "Bag.h"
@@ -30,7 +31,6 @@
 #include "ObjectAccessor.h"
 #include "Player.h"
 #include "ScriptMgr.h"
-#include "ScriptedGossip.h"
 #include "SharedDefines.h"
 #include "Spell.h"
 #include "SpellAuraDefines.h"
@@ -38,6 +38,8 @@
 #include "SpellAuras.h"
 #include "SpellDefines.h"
 #include "SpellInfo.h"
+#include "StringConvert.h"
+#include "Tokenize.h"
 #include "SpellMgr.h"
 #include "SpellScript.h"
 #include "fabled.h"
@@ -61,14 +63,11 @@
 namespace
 {
 std::string const STATE_KEY = "mod-tertiary-stats";
-std::string const REFORGE_STATE_KEY = "mod-tertiary-stats-reforge";
-constexpr std::string_view TERTIARY_PROTOCOL_VERSION = "V1";
+constexpr std::string_view TERTIARY_PROTOCOL_VERSION = "V2";
 std::atomic<uint32> _tertiaryProtocolGeneration{ 0 };
 constexpr uint8 MAX_POWERS_PER_ITEM = 3;
 constexpr uint8 BONUS_MASK_BITS = 7;
 constexpr uint16 MAX_BONUS_POINTS = (1u << (16 - BONUS_MASK_BITS)) - 1;
-constexpr uint8 HEIRLOOM_PROFILE_SHIFT = 16;
-constexpr uint8 HEIRLOOM_PROFILE_MASK = 0xFF;
 
 enum class HeirloomProfile : uint8
 {
@@ -157,6 +156,11 @@ struct Settings
     uint32 minItemLevel = 1;
     std::array<float, POWER_COUNT> weights = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
 
+    bool rerollEnabled = true;
+    float rerollVendorMultiplier = 5.0f;
+    uint32 rerollMinCost = 10000;
+    uint32 rerollMaxCost = 1000000;
+
     float avoidancePerPoint = 0.5f;
     float fleetfootBase = 15.0f;
     float fleetfootPerPoint = 1.1f;
@@ -198,7 +202,6 @@ struct BonusDefinition
 {
     uint8 powerMask = 0;
     uint16 pointsPerPower = 0;
-    uint8 fabledEffect = 0;
 };
 
 Settings _settings;
@@ -345,35 +348,24 @@ bool DecodeBonusId(uint16 bonusId, BonusDefinition& definition)
     if (!bonusId)
         return false;
 
-    if (Fabled::Effect effect = Fabled::EffectFromBonusId(bonusId); effect != Fabled::Effect::None)
-    {
-        definition = { 0, 0, uint8(effect) };
-        return true;
-    }
-
     uint8 mask = uint8(bonusId & ((1u << BONUS_MASK_BITS) - 1));
     uint16 points = bonusId >> BONUS_MASK_BITS;
     if (EncodeBonusId(mask, points) != bonusId)
         return false;
 
-    definition = { mask, points, 0 };
+    definition = { mask, points };
     return true;
 }
 
-std::string TertiaryDefinitionWirePayload(uint16 bonusId)
+std::string TertiaryDefinitionWirePayload(uint16 bonusId, Fabled::Effect memory)
 {
     BonusDefinition definition;
-    if (!DecodeBonusId(bonusId, definition))
+    bool ordinary = DecodeBonusId(bonusId, definition);
+    if (!ordinary && memory == Fabled::Effect::None)
         return {};
 
-    if (definition.fabledEffect)
-        return Acore::StringFormat("F:{}", uint32(definition.fabledEffect));
-
-    std::string payload = Acore::StringFormat("O:{}", definition.pointsPerPower);
-    for (uint8 powerIndex = 0; powerIndex < POWER_COUNT; ++powerIndex)
-        if (definition.powerMask & (1u << powerIndex))
-            payload += Acore::StringFormat(":{}", uint32(powerIndex));
-    return payload;
+    return Acore::StringFormat("D:{}:{}:{}", ordinary ? definition.pointsPerPower : 0,
+        ordinary ? uint32(definition.powerMask) : 0, uint32(memory));
 }
 
 uint32 NextTertiaryProtocolGeneration()
@@ -570,12 +562,15 @@ uint32 HeirloomPointBudget(HeirloomProfile profile, uint32 level)
 
 uint32 AddHeirloomProfile(uint32 seed, HeirloomProfile profile)
 {
-    return seed | (uint32(profile) << HEIRLOOM_PROFILE_SHIFT);
+    return (seed & ~(ITEM_BONUS_HEIRLOOM_PROFILE_MASK
+            << ITEM_BONUS_HEIRLOOM_PROFILE_SHIFT))
+        | (uint32(profile) << ITEM_BONUS_HEIRLOOM_PROFILE_SHIFT);
 }
 
 HeirloomProfile HeirloomProfileFromSeed(uint32 seed)
 {
-    uint8 profile = uint8((seed >> HEIRLOOM_PROFILE_SHIFT) & HEIRLOOM_PROFILE_MASK);
+    uint8 profile = uint8((seed >> ITEM_BONUS_HEIRLOOM_PROFILE_SHIFT)
+        & ITEM_BONUS_HEIRLOOM_PROFILE_MASK);
     return profile <= uint8(HeirloomProfile::Tertiary)
         ? HeirloomProfile(profile) : HeirloomProfile::None;
 }
@@ -683,20 +678,59 @@ Power PickPower(BonusRng& rng, uint8 selectedMask, Settings const& settings)
     return power;
 }
 
-uint16 RollBonus(ItemTemplate const* itemTemplate, BonusRng& rng,
+uint8 PowerCount(uint8 mask)
+{
+    uint8 count = 0;
+    for (uint8 index = 0; index < POWER_COUNT; ++index)
+        count += (mask & (1u << index)) != 0;
+    return count;
+}
+
+uint8 RerollPowerMask(uint8 currentMask, BonusRng& rng, Settings const& settings)
+{
+    uint8 count = PowerCount(currentMask);
+    for (uint8 attempt = 0; attempt < 64; ++attempt)
+    {
+        uint8 mask = 0;
+        for (uint8 slot = 0; slot < count; ++slot)
+        {
+            Power power = PickPower(rng, mask, settings);
+            if (power == Power::Count)
+                break;
+            mask |= PowerBit(power);
+        }
+        if (PowerCount(mask) == count && mask != currentMask)
+            return mask;
+    }
+    return 0;
+}
+
+struct RolledBonus
+{
+    uint16 ordinary = 0;
+    Fabled::Effect memory = Fabled::Effect::None;
+};
+
+RolledBonus RollBonus(ItemTemplate const* itemTemplate, BonusRng& rng,
     Settings const& settings, Fabled::Settings const& fabledSettings)
 {
     if (!IsEligibleEquipment(itemTemplate) || !rng.RollChance(settings.rollChance))
-        return 0;
+        return {};
+
+    Power firstPower = PickPower(rng, 0, settings);
+    if (firstPower == Power::Count)
+        return {};
+    uint8 mask = PowerBit(firstPower);
+
+    Fabled::Effect memory = Fabled::Effect::None;
     std::span<Fabled::Effect const> fabledPool = Fabled::EffectPoolFor(itemTemplate);
     if (Fabled::IsReady() && !fabledPool.empty()
         && rng.RollChance(FabledRollChance(itemTemplate->Quality, fabledSettings)))
-        return Fabled::BonusId(fabledPool[rng.Range(0, uint32(fabledPool.size() - 1))]);
+        memory = fabledPool[rng.Range(0, uint32(fabledPool.size() - 1))];
 
-    uint8 mask = 0;
-    for (uint8 slot = 0; slot < MAX_POWERS_PER_ITEM; ++slot)
+    for (uint8 slot = 1; slot < MAX_POWERS_PER_ITEM; ++slot)
     {
-        if (slot && !rng.RollChance(settings.rollChance))
+        if (!rng.RollChance(settings.rollChance))
             break;
 
         Power power = PickPower(rng, mask, settings);
@@ -705,9 +739,9 @@ uint16 RollBonus(ItemTemplate const* itemTemplate, BonusRng& rng,
         mask |= PowerBit(power);
     }
 
-    uint32 pointsPerPower = ItemPointBudget(itemTemplate);
-    return EncodeBonusId(mask, pointsPerPower);
+    return { EncodeBonusId(mask, ItemPointBudget(itemTemplate)), memory };
 }
+
 uint16 TertiaryBonusFromSeed(uint32 seed)
 {
     if ((seed >> ITEM_BONUS_SEED_VERSION_SHIFT) != ITEM_BONUS_SEED_VERSION)
@@ -727,7 +761,7 @@ uint16 ResolvedTertiaryBonusFromSeed(uint32 seed, Player const* player,
 {
     uint16 bonusId = TertiaryBonusFromSeed(seed);
     BonusDefinition definition;
-    if (!DecodeBonusId(bonusId, definition) || definition.fabledEffect)
+    if (!DecodeBonusId(bonusId, definition))
         return bonusId;
 
     HeirloomProfile profile = HeirloomProfileFromSeed(seed);
@@ -746,6 +780,20 @@ uint16 ResolvedTertiaryBonusOf(Item const* item, Player const* player)
     return item
         ? ResolvedTertiaryBonusFromSeed(item->GetBonusSeed(), player, item->GetTemplate())
         : 0;
+}
+
+std::string TertiaryDefinitionWirePayloadFromSeed(uint32 seed, Player const* player,
+    ItemTemplate const* itemTemplate = nullptr)
+{
+    return TertiaryDefinitionWirePayload(
+        ResolvedTertiaryBonusFromSeed(seed, player, itemTemplate),
+        Fabled::EffectFromItemBonusSeed(seed));
+}
+
+std::string TertiaryDefinitionWirePayloadOf(Item const* item, Player const* player)
+{
+    return item ? TertiaryDefinitionWirePayloadFromSeed(
+        item->GetBonusSeed(), player, item->GetTemplate()) : "";
 }
 
 
@@ -867,15 +915,17 @@ void RefreshEquipment(Player* player, TertiaryState& state)
         if (!SettingsFor(state).enabled || !_dbcReady)
             continue;
 
+        Fabled::Effect attuned = Fabled::AttunedEffect(player, slot);
+        if (attuned != Fabled::Effect::None
+            && Fabled::CanAttuneTo(attuned, item->GetTemplate()))
+        {
+            fabledMask |= Fabled::EffectBit(attuned);
+            continue;
+        }
+
         BonusDefinition definition;
         if (!DecodeBonusId(ResolvedTertiaryBonusOf(item, player), definition))
             continue;
-
-        if (definition.fabledEffect)
-        {
-            fabledMask |= Fabled::EffectBit(Fabled::Effect(definition.fabledEffect));
-            continue;
-        }
 
         for (uint8 index = 0; index < POWER_COUNT; ++index)
             if (definition.powerMask & (1u << index))
@@ -927,47 +977,37 @@ void SendTertiarySnapshotMessage(Player* player, std::string const& payload)
 }
 
 void SendTertiaryInventorySnapshot(Player* player);
+void SendTertiarySnapshot(Player* player);
 
-struct ReforgeSelection final : DataMap::Base
+Item* FindClientItem(Player* player, bool equipped, uint8 bag, uint8 slot)
 {
-    ObjectGuid sourceGuid;
-    std::vector<ObjectGuid> menuGuids;
-};
+    if (!player || !slot)
+        return nullptr;
 
-std::vector<Item*> CarriedItems(Player* player)
-{
-    std::vector<Item*> items;
-    for (uint8 slot = INVENTORY_SLOT_ITEM_START; slot < INVENTORY_SLOT_ITEM_END; ++slot)
-        if (Item* item = player->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
-            items.push_back(item);
+    if (equipped)
+        return slot <= EQUIPMENT_SLOT_END
+            ? player->GetItemByPos(INVENTORY_SLOT_BAG_0, slot - 1) : nullptr;
 
-    for (uint8 bagSlot = INVENTORY_SLOT_BAG_START; bagSlot < INVENTORY_SLOT_BAG_END; ++bagSlot)
+    if (!bag)
     {
-        Bag* bag = player->GetBagByPos(bagSlot);
-        if (!bag)
-            continue;
-
-        for (uint32 slot = 0; slot < bag->GetBagSize(); ++slot)
-            if (Item* item = bag->GetItemByPos(slot))
-                items.push_back(item);
+        uint16 serverSlot = uint16(INVENTORY_SLOT_ITEM_START) + slot - 1;
+        return serverSlot < INVENTORY_SLOT_ITEM_END
+            ? player->GetItemByPos(INVENTORY_SLOT_BAG_0, uint8(serverSlot)) : nullptr;
     }
-    return items;
+
+    uint16 bagSlot = uint16(INVENTORY_SLOT_BAG_START) + bag - 1;
+    Bag* container = bagSlot < INVENTORY_SLOT_BAG_END
+        ? player->GetBagByPos(uint8(bagSlot)) : nullptr;
+    return container && slot <= container->GetBagSize()
+        ? container->GetItemByPos(slot - 1) : nullptr;
 }
 
-Item* FindCarriedItem(Player* player, ObjectGuid guid)
+uint32 TertiaryRerollCost(ItemTemplate const* itemTemplate)
 {
-    for (Item* item : CarriedItems(player))
-        if (item->GetGUID() == guid)
-            return item;
-    return nullptr;
-}
-
-uint32 FabledReforgeCost(ItemTemplate const* itemTemplate)
-{
-    Fabled::Settings const& settings = Fabled::GetSettings();
-    uint64 scaled = uint64(std::llround(double(itemTemplate->SellPrice)
-        * double(settings.reforgeVendorMultiplier)));
-    return uint32(std::clamp<uint64>(scaled, settings.reforgeMinCost, settings.reforgeMaxCost));
+    double scaled = std::round(double(itemTemplate->SellPrice)
+        * double(_settings.rerollVendorMultiplier));
+    return uint32(std::clamp(scaled, double(_settings.rerollMinCost),
+        double(_settings.rerollMaxCost)));
 }
 
 std::string MoneyText(uint32 copper)
@@ -978,93 +1018,65 @@ std::string MoneyText(uint32 copper)
     return Acore::StringFormat("{}g {}s {}c", gold, silver, remainder);
 }
 
-bool ValidateReforgeContext(Player* player, std::string& error)
+bool RerollTertiary(Player* player, Item* item, std::string& message)
 {
-    if (!Fabled::GetSettings().reforgeEnabled)
-        error = "Fabled reforging is currently disabled.";
+    if (!_settings.rerollEnabled)
+        message = "Tertiary rerolling is currently disabled.";
     else if (!player->IsAlive())
-        error = "You must be alive to reforge an item.";
+        message = "You must be alive to reroll an item.";
     else if (player->IsInCombat())
-        error = "You cannot reforge an item while in combat.";
+        message = "You cannot reroll an item while in combat.";
     else if (player->GetTradeData())
-        error = "You cannot reforge an item while trading.";
+        message = "You cannot reroll an item while trading.";
+    else if (!item || item->GetOwnerGUID() != player->GetGUID()
+        || item->GetCount() != 1 || item->IsInTrade())
+        message = "That item is no longer available.";
+    else if (!IsEligibleEquipment(item->GetTemplate()))
+        message = "That item is not eligible for tertiary powers.";
     else
+    {
+        BonusDefinition definition;
+        if (!DecodeBonusId(TertiaryBonusOf(item), definition))
+        {
+            message = "That item has no ordinary tertiary package to reroll.";
+            return false;
+        }
+
+        uint32 cost = TertiaryRerollCost(item->GetTemplate());
+        if (!player->HasEnoughMoney(cost))
+        {
+            message = "You do not have enough money for this reroll.";
+            return false;
+        }
+
+        BonusRng rng(rand32(), item->GetEntry());
+        uint8 mask = RerollPowerMask(definition.powerMask, rng, _settings);
+        if (!mask)
+        {
+            message = "No different tertiary combination is currently available.";
+            return false;
+        }
+
+        uint16 bonusId = EncodeBonusId(mask, definition.pointsPerPower);
+        uint32 seed = (item->GetBonusSeed() & ~ITEM_BONUS_ID_MASK) | bonusId;
+        CharacterDatabaseTransaction transaction = CharacterDatabase.BeginTransaction();
+        item->SetBonusSeed(seed);
+        item->SetBinding(true);
+        item->SetNotRefundable(player, true, &transaction);
+        item->ClearSoulboundTradeable(player, &transaction);
+        player->RemoveTradeableItem(item);
+        player->ModifyMoney(-int32(cost));
+        player->SaveInventoryAndGoldToDB(transaction);
+        CharacterDatabase.CommitTransaction(transaction);
+
+        if (TertiaryState* state = FindState(player))
+            state->needsRefresh = true;
+        message = Acore::StringFormat(
+            "Rerolled {} for {}. Any Fabled provenance was preserved.",
+            item->GetTemplate()->Name1, MoneyText(cost));
         return true;
+    }
     return false;
-}
-
-bool ValidateReforgeItems(Player* player, Item* source, Item* destination,
-    Fabled::Effect& effect, uint32& cost, std::string& error)
-{
-    if (!source || !destination || source == destination)
-    {
-        error = "The selected items are no longer available in your carried bags.";
-        return false;
-    }
-    if (source->GetOwnerGUID() != player->GetGUID() || destination->GetOwnerGUID() != player->GetGUID()
-        || source->GetCount() != 1 || destination->GetCount() != 1
-        || source->IsInTrade() || destination->IsInTrade())
-    {
-        error = "Both items must be unstacked, unlocked, and owned by you.";
-        return false;
-    }
-
-    effect = Fabled::EffectFromBonusId(TertiaryBonusOf(source));
-    if (effect == Fabled::Effect::None)
-    {
-        error = "The source item no longer has a Fabled effect.";
-        return false;
-    }
-    if (Fabled::EffectFromBonusId(TertiaryBonusOf(destination)) != Fabled::Effect::None)
-    {
-        error = "The destination item is already Fabled.";
-        return false;
-    }
-    if (!Fabled::CanReforgeTo(effect, destination->GetTemplate()))
-    {
-        error = "That Fabled effect cannot be applied to the selected item.";
-        return false;
-    }
-
-    cost = FabledReforgeCost(destination->GetTemplate());
-    if (!player->HasEnoughMoney(cost))
-    {
-        error = "You do not have enough money for this reforge.";
-        return false;
-    }
-    return true;
-}
-
-bool ReforgeFabled(Player* player, ObjectGuid sourceGuid, ObjectGuid destinationGuid,
-    std::string& message)
-{
-    if (!ValidateReforgeContext(player, message))
-        return false;
-
-    Item* source = FindCarriedItem(player, sourceGuid);
-    Item* destination = FindCarriedItem(player, destinationGuid);
-    Fabled::Effect effect = Fabled::Effect::None;
-    uint32 cost = 0;
-    if (!ValidateReforgeItems(player, source, destination, effect, cost, message))
-        return false;
-
-    uint8 sourceBag = source->GetBagSlot();
-    uint8 sourceSlot = source->GetSlot();
-    CharacterDatabaseTransaction transaction = CharacterDatabase.BeginTransaction();
-    destination->SetBonusSeed(MakeItemBonusSeed(Fabled::BonusId(effect)));
-    destination->SetBinding(true);
-    destination->SetNotRefundable(player, true, &transaction);
-    destination->ClearSoulboundTradeable(player, &transaction);
-    player->RemoveTradeableItem(destination);
-    player->DestroyItem(sourceBag, sourceSlot, true, &transaction);
-    player->ModifyMoney(-int32(cost));
-    player->SaveInventoryAndGoldToDB(transaction);
-    CharacterDatabase.CommitTransaction(transaction);
-
-    SendTertiaryInventorySnapshot(player);
-    message = Acore::StringFormat("{} was reforged onto {} for {}. The source item was destroyed.",
-        Fabled::Name(effect), destination->GetTemplate()->Name1, MoneyText(cost));
-    return true;
 }
 
 void SendTertiaryInventorySnapshot(Player* player)
@@ -1075,19 +1087,21 @@ void SendTertiaryInventorySnapshot(Player* player)
     for (uint8 slot = EQUIPMENT_SLOT_START; slot < EQUIPMENT_SLOT_END; ++slot)
     {
         Item const* item = player->GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
-        std::string definition = TertiaryDefinitionWirePayload(ResolvedTertiaryBonusOf(item, player));
+        std::string definition = TertiaryDefinitionWirePayloadOf(item, player);
         if (!definition.empty())
-            SendTertiarySnapshotMessage(player, Acore::StringFormat("I:E:{}:{}:{}",
-                generation, uint32(slot - EQUIPMENT_SLOT_START + 1), definition));
+            SendTertiarySnapshotMessage(player, Acore::StringFormat("I:E:{}:{}:{}:{}",
+                generation, uint32(slot - EQUIPMENT_SLOT_START + 1),
+                TertiaryRerollCost(item->GetTemplate()), definition));
     }
 
     for (uint8 slot = INVENTORY_SLOT_ITEM_START; slot < INVENTORY_SLOT_ITEM_END; ++slot)
     {
         Item const* item = player->GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
-        std::string definition = TertiaryDefinitionWirePayload(ResolvedTertiaryBonusOf(item, player));
+        std::string definition = TertiaryDefinitionWirePayloadOf(item, player);
         if (!definition.empty())
-            SendTertiarySnapshotMessage(player, Acore::StringFormat("I:B:{}:0:{}:{}",
-                generation, uint32(slot - INVENTORY_SLOT_ITEM_START + 1), definition));
+            SendTertiarySnapshotMessage(player, Acore::StringFormat("I:B:{}:0:{}:{}:{}",
+                generation, uint32(slot - INVENTORY_SLOT_ITEM_START + 1),
+                TertiaryRerollCost(item->GetTemplate()), definition));
     }
 
     for (uint8 bagSlot = INVENTORY_SLOT_BAG_START; bagSlot < INVENTORY_SLOT_BAG_END; ++bagSlot)
@@ -1100,14 +1114,31 @@ void SendTertiaryInventorySnapshot(Player* player)
         for (uint32 slot = 0; slot < bag->GetBagSize(); ++slot)
         {
             Item const* item = bag->GetItemByPos(slot);
-            std::string definition = TertiaryDefinitionWirePayload(ResolvedTertiaryBonusOf(item, player));
+            std::string definition = TertiaryDefinitionWirePayloadOf(item, player);
             if (!definition.empty())
-                SendTertiarySnapshotMessage(player, Acore::StringFormat("I:B:{}:{}:{}:{}",
-                    generation, clientBag, slot + 1, definition));
+                SendTertiarySnapshotMessage(player, Acore::StringFormat(
+                    "I:B:{}:{}:{}:{}:{}", generation, clientBag, slot + 1,
+                    TertiaryRerollCost(item->GetTemplate()), definition));
         }
     }
 
     SendTertiarySnapshotMessage(player, Acore::StringFormat("I:D:{}", generation));
+}
+
+void SendFabledAttunementSnapshot(Player* player)
+{
+    uint32 generation = NextTertiaryProtocolGeneration();
+    SendTertiarySnapshotMessage(player, Acore::StringFormat("M:C:{}", generation));
+    SendTertiarySnapshotMessage(player, Acore::StringFormat(
+        "M:U:{}:{}", generation, Fabled::UnlockedEffects(player)));
+    for (uint8 slot = EQUIPMENT_SLOT_START; slot < EQUIPMENT_SLOT_END; ++slot)
+    {
+        Fabled::Effect effect = Fabled::AttunedEffect(player, slot);
+        if (effect != Fabled::Effect::None)
+            SendTertiarySnapshotMessage(player, Acore::StringFormat(
+                "M:S:{}:{}:{}", generation, uint32(slot + 1), uint32(effect)));
+    }
+    SendTertiarySnapshotMessage(player, Acore::StringFormat("M:D:{}", generation));
 }
 
 void SendTertiaryLootSnapshot(Player* player, Loot* loot)
@@ -1121,8 +1152,8 @@ void SendTertiaryLootSnapshot(Player* player, Loot* loot)
             LootItem const* lootItem = loot->LootItemInSlot(slot, player);
             ItemTemplate const* itemTemplate =
                 lootItem ? sObjectMgr->GetItemTemplate(lootItem->itemid) : nullptr;
-            std::string definition = lootItem ? TertiaryDefinitionWirePayload(
-                ResolvedTertiaryBonusFromSeed(lootItem->bonusSeed, player, itemTemplate)) : "";
+            std::string definition = lootItem ? TertiaryDefinitionWirePayloadFromSeed(
+                lootItem->bonusSeed, player, itemTemplate) : "";
             if (!definition.empty())
                 SendTertiarySnapshotMessage(player,
                     Acore::StringFormat("L:R:{}:{}:{}", generation, slot + 1, definition));
@@ -1140,8 +1171,8 @@ void SendTertiaryAuctionSnapshot(Player* player, uint8 listType,
     for (uint32 index = 0; index < items.size(); ++index)
     {
         ItemTemplate const* itemTemplate = sObjectMgr->GetItemTemplate(items[index].itemEntry);
-        std::string definition = TertiaryDefinitionWirePayload(
-            ResolvedTertiaryBonusFromSeed(items[index].itemBonusSeed, player, itemTemplate));
+        std::string definition = TertiaryDefinitionWirePayloadFromSeed(
+            items[index].itemBonusSeed, player, itemTemplate);
         if (!definition.empty())
             SendTertiarySnapshotMessage(player, Acore::StringFormat("A:R:{}:{}:{}:{}",
                 generation, uint32(listType), index + 1, definition));
@@ -1203,7 +1234,10 @@ void SendTertiarySnapshot(Player* player)
         state.rawPoints[PowerIndex(Power::Opportunity)], OpportunityPpm(state),
         _settings.opportunityDurationMs));
     SendFabledSettingsSnapshot(player);
+    SendTertiarySnapshotMessage(player, Acore::StringFormat(
+        "R:C:{}", uint32(_settings.rerollEnabled)));
     SendTertiaryInventorySnapshot(player);
+    SendFabledAttunementSnapshot(player);
 }
 
 
@@ -1951,6 +1985,20 @@ public:
             _settings.weights[index] = std::max(0.0f, sConfigMgr->GetOption<float>(key, 1.0f));
         }
 
+        _settings.rerollEnabled =
+            sConfigMgr->GetOption<bool>("TertiaryStats.Reroll.Enable", true);
+        _settings.rerollVendorMultiplier = std::max(0.0f,
+            sConfigMgr->GetOption<float>("TertiaryStats.Reroll.VendorMultiplier", 5.0f));
+        _settings.rerollMinCost = std::min<uint32>(
+            sConfigMgr->GetOption<uint32>("TertiaryStats.Reroll.MinCostCopper", GOLD),
+            std::numeric_limits<int32>::max());
+        _settings.rerollMaxCost = std::min<uint32>(
+            sConfigMgr->GetOption<uint32>(
+                "TertiaryStats.Reroll.MaxCostCopper", 100 * GOLD),
+            std::numeric_limits<int32>::max());
+        if (_settings.rerollMinCost > _settings.rerollMaxCost)
+            std::swap(_settings.rerollMinCost, _settings.rerollMaxCost);
+
         _settings.avoidancePerPoint = std::max(0.0f, sConfigMgr->GetOption<float>("TertiaryStats.Value.AvoidancePerPoint", 0.5f));
         _settings.fleetfootBase = std::max(0.0f, sConfigMgr->GetOption<float>("TertiaryStats.Value.FleetfootBase", 15.0f));
         _settings.fleetfootPerPoint = std::max(0.0f, sConfigMgr->GetOption<float>("TertiaryStats.Value.FleetfootPerPoint", 1.1f));
@@ -2022,9 +2070,11 @@ public:
         Settings const& settings = _itemRollTestSettings ? *_itemRollTestSettings : _settings;
         Fabled::Settings const& fabledSettings = _fabledRollTestSettings
             ? *_fabledRollTestSettings : Fabled::GetSettings();
-        bonusSeed = MakeItemBonusSeed(RollBonus(itemTemplate, rng, settings, fabledSettings));
-        if (bonusSeed != MakeItemBonusSeed(0))
-            bonusSeed = AddHeirloomProfile(bonusSeed, HeirloomProfileFor(itemTemplate));
+        RolledBonus rolled = RollBonus(itemTemplate, rng, settings, fabledSettings);
+        HeirloomProfile profile = rolled.ordinary || rolled.memory != Fabled::Effect::None
+            ? HeirloomProfileFor(itemTemplate) : HeirloomProfile::None;
+        bonusSeed = MakeItemBonusSeed(
+            rolled.ordinary, uint8(profile), uint8(rolled.memory));
     }
 };
 
@@ -2048,7 +2098,8 @@ public:
         PLAYERHOOK_CAN_USE_GAMEOBJECT_WHILE_MOUNTED,
         PLAYERHOOK_ON_BEFORE_SEND_LOOT,
         PLAYERHOOK_ON_AFTER_SEND_AUCTION_LIST,
-        PLAYERHOOK_CAN_PLAYER_USE_PRIVATE_CHAT
+        PLAYERHOOK_CAN_PLAYER_USE_PRIVATE_CHAT,
+        PLAYERHOOK_ON_DELETE_FROM_DB
     }) { }
 
     void OnPlayerBeforeSendLoot(Player* player, ObjectGuid /*lootGuid*/, Loot* loot) override
@@ -2065,14 +2116,30 @@ public:
 
     void OnPlayerLogin(Player* player) override
     {
+        Fabled::LoadAttunements(player);
+        bool hasTertiary = Fabled::UnlockedEffects(player) != 0;
         for (uint8 slot = EQUIPMENT_SLOT_START; slot < EQUIPMENT_SLOT_END; ++slot)
         {
-            if (TertiaryBonusOf(player->GetItemByPos(INVENTORY_SLOT_BAG_0, slot)))
+            Item* item = player->GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
+            if (!item)
+                continue;
+
+            Fabled::Effect memory =
+                Fabled::EffectFromItemBonusSeed(item->GetBonusSeed());
+            if (memory != Fabled::Effect::None)
             {
-                GetState(player)->needsRefresh = true;
-                return;
+                if (!Fabled::IsUnlocked(player, memory))
+                {
+                    std::string ignored;
+                    Fabled::LearnFromEquippedItem(player, item, slot, ignored);
+                }
+                hasTertiary = true;
             }
+            if (TertiaryBonusOf(item))
+                hasTertiary = true;
         }
+        if (hasTertiary)
+            GetState(player)->needsRefresh = true;
     }
 
     void OnPlayerLevelChanged(Player* player, uint8 /*oldLevel*/) override
@@ -2091,10 +2158,62 @@ public:
             return true;
 
         std::string_view payload(message.data() + PREFIX.size(), message.size() - PREFIX.size());
-        if (payload == "V1:S")
+        if (payload == "V2:S")
             SendTertiarySnapshot(player);
-        else if (payload == "V1:I")
+        else if (payload == "V2:I")
             SendTertiaryInventorySnapshot(player);
+        else if (payload == "V2:M")
+            SendFabledAttunementSnapshot(player);
+        else if (payload.starts_with("V2:A:"))
+        {
+            std::vector<std::string_view> tokens = Acore::Tokenize(payload, ':', false);
+            std::string response = "Invalid Fabled attunement request.";
+            bool changed = false;
+            if (tokens.size() == 4)
+            {
+                Optional<uint32> effectIndex = Acore::StringTo<uint32>(tokens[2]);
+                Optional<uint32> clientSlot = Acore::StringTo<uint32>(tokens[3]);
+                if (effectIndex && *effectIndex <= Fabled::EFFECT_COUNT
+                    && clientSlot && *clientSlot >= 1 && *clientSlot <= EQUIPMENT_SLOT_END)
+                {
+                    uint8 slot = uint8(*clientSlot - 1);
+                    changed = *effectIndex
+                        ? Fabled::SetAttunement(player, Fabled::Effect(*effectIndex), slot, response)
+                        : Fabled::ClearAttunement(player, slot, response);
+                }
+            }
+            ChatHandler(player->GetSession()).SendSysMessage(response);
+            if (changed)
+            {
+                GetState(player)->needsRefresh = true;
+                SendTertiarySnapshot(player);
+            }
+        }
+        else if (payload.starts_with("V2:R:"))
+        {
+            std::vector<std::string_view> tokens = Acore::Tokenize(payload, ':', false);
+            Item* item = nullptr;
+            if (tokens.size() == 4 && tokens[2] == "E")
+            {
+                if (Optional<uint32> slot = Acore::StringTo<uint32>(tokens[3]);
+                    slot && *slot <= std::numeric_limits<uint8>::max())
+                    item = FindClientItem(player, true, 0, uint8(*slot));
+            }
+            else if (tokens.size() == 5 && tokens[2] == "B")
+            {
+                Optional<uint32> bag = Acore::StringTo<uint32>(tokens[3]);
+                Optional<uint32> slot = Acore::StringTo<uint32>(tokens[4]);
+                if (bag && *bag <= std::numeric_limits<uint8>::max()
+                    && slot && *slot <= std::numeric_limits<uint8>::max())
+                {
+                    item = FindClientItem(player, false, uint8(*bag), uint8(*slot));
+                }
+            }
+
+            std::string response;
+            RerollTertiary(player, item, response);
+            ChatHandler(player->GetSession()).SendSysMessage(response);
+        }
 
         return false;
     }
@@ -2189,16 +2308,36 @@ public:
         }
     }
 
-    void OnPlayerEquip(Player* player, Item* item, uint8 /*bag*/, uint8 /*slot*/, bool /*update*/) override
+
+    void OnPlayerEquip(Player* player, Item* item, uint8 /*bag*/, uint8 slot,
+        bool /*update*/) override
     {
-        if (TertiaryBonusOf(item) || FindState(player))
+        if (!player->IsInWorld())
+            return;
+
+        if (Fabled::EffectFromItemBonusSeed(item->GetBonusSeed()) != Fabled::Effect::None)
+        {
+            std::string message;
+            if (Fabled::LearnFromEquippedItem(player, item, slot, message))
+                ChatHandler(player->GetSession()).SendSysMessage(message);
+        }
+
+        if (TertiaryBonusOf(item) || Fabled::UnlockedEffects(player) || FindState(player))
             GetState(player)->needsRefresh = true;
+        SendTertiaryInventorySnapshot(player);
+        SendFabledAttunementSnapshot(player);
     }
 
     void OnPlayerUnequip(Player* player, Item* item) override
     {
         if (TertiaryBonusOf(item) || FindState(player))
             GetState(player)->needsRefresh = true;
+    }
+
+    void OnPlayerDeleteFromDB(CharacterDatabaseTransaction transaction, uint32 guid) override
+    {
+        transaction->Append(
+            "DELETE FROM `mod_tertiary_fabled` WHERE `guid`={}", guid);
     }
 
 
@@ -2554,158 +2693,6 @@ class spell_tertiary_unbroken_daze final : public SpellScript
     }
 
 };
-constexpr uint32 GOSSIP_ACTION_REFORGE_BACK = GOSSIP_ACTION_INFO_DEF + 1;
-constexpr uint32 GOSSIP_ACTION_REFORGE_SOURCE = GOSSIP_ACTION_INFO_DEF + 100;
-constexpr uint32 GOSSIP_ACTION_REFORGE_DESTINATION = GOSSIP_ACTION_INFO_DEF + 200;
-
-class npc_fabled_reforger final : public CreatureScript
-{
-public:
-    npc_fabled_reforger() : CreatureScript("npc_fabled_reforger") { }
-
-    void BuildSourceMenu(Player* player, Creature* creature)
-    {
-        player->PlayerTalkClass->ClearMenus();
-        ReforgeSelection* selection =
-            player->CustomData.GetDefault<ReforgeSelection>(REFORGE_STATE_KEY);
-        selection->sourceGuid.Clear();
-        selection->menuGuids.clear();
-
-        for (Item* item : CarriedItems(player))
-        {
-            Fabled::Effect effect = Fabled::EffectFromBonusId(TertiaryBonusOf(item));
-            if (effect == Fabled::Effect::None || item->GetCount() != 1 || item->IsInTrade())
-                continue;
-
-            selection->menuGuids.push_back(item->GetGUID());
-            AddGossipItemFor(player, GOSSIP_ICON_INTERACT_1,
-                Acore::StringFormat("{} — {}", item->GetTemplate()->Name1,
-                    Fabled::Name(effect)),
-                GOSSIP_SENDER_MAIN,
-                GOSSIP_ACTION_REFORGE_SOURCE + uint32(selection->menuGuids.size() - 1));
-        }
-
-        if (selection->menuGuids.empty())
-            ChatHandler(player->GetSession()).SendSysMessage(
-                "No Fabled source items were found in your carried bags.");
-        SendGossipMenuFor(player, creature->GetEntry(), creature->GetGUID());
-    }
-
-    void BuildDestinationMenu(Player* player, Creature* creature)
-    {
-        player->PlayerTalkClass->ClearMenus();
-        ReforgeSelection* selection =
-            player->CustomData.GetDefault<ReforgeSelection>(REFORGE_STATE_KEY);
-        Item* source = FindCarriedItem(player, selection->sourceGuid);
-        Fabled::Effect effect = source
-            ? Fabled::EffectFromBonusId(TertiaryBonusOf(source)) : Fabled::Effect::None;
-        selection->menuGuids.clear();
-        if (effect == Fabled::Effect::None)
-        {
-            ChatHandler(player->GetSession()).SendSysMessage(
-                "The selected Fabled source item is no longer available.");
-            BuildSourceMenu(player, creature);
-            return;
-        }
-
-        for (Item* item : CarriedItems(player))
-        {
-            if (item == source || item->GetCount() != 1 || item->IsInTrade()
-                || !Fabled::CanReforgeTo(effect, item->GetTemplate())
-                || Fabled::EffectFromBonusId(TertiaryBonusOf(item)) != Fabled::Effect::None)
-                continue;
-
-            uint32 cost = FabledReforgeCost(item->GetTemplate());
-            selection->menuGuids.push_back(item->GetGUID());
-            std::string confirmation = Acore::StringFormat(
-                "Reforge {} onto {} for {}? The source item will be destroyed, "
-                "the destination's existing tertiary powers will be replaced, and the destination "
-                "will become soulbound and non-refundable.",
-                Fabled::Name(effect), item->GetTemplate()->Name1, MoneyText(cost));
-            AddGossipItemFor(player, GOSSIP_ICON_MONEY_BAG,
-                Acore::StringFormat("{} — {}", item->GetTemplate()->Name1, MoneyText(cost)),
-                GOSSIP_SENDER_MAIN,
-                GOSSIP_ACTION_REFORGE_DESTINATION + uint32(selection->menuGuids.size() - 1),
-                confirmation, 0, false);
-        }
-
-        if (selection->menuGuids.empty())
-            ChatHandler(player->GetSession()).PSendSysMessage(
-                "No eligible %s destination items were found in your carried bags.",
-                Fabled::AnchorName(Fabled::AnchorFor(effect)));
-        AddGossipItemFor(player, GOSSIP_ICON_CHAT, "Back", GOSSIP_SENDER_MAIN,
-            GOSSIP_ACTION_REFORGE_BACK);
-        SendGossipMenuFor(player, creature->GetEntry(), creature->GetGUID());
-    }
-
-    bool OnGossipHello(Player* player, Creature* creature) override
-    {
-        std::string error;
-        if (!ValidateReforgeContext(player, error))
-        {
-            ChatHandler(player->GetSession()).SendSysMessage(error);
-            CloseGossipMenuFor(player);
-            return true;
-        }
-        BuildSourceMenu(player, creature);
-        return true;
-    }
-
-    bool OnGossipSelect(Player* player, Creature* creature, uint32 /*sender*/, uint32 action) override
-    {
-        if (!player || !creature)
-            return false;
-
-        std::string error;
-        if (!ValidateReforgeContext(player, error))
-        {
-            ChatHandler(player->GetSession()).SendSysMessage(error);
-            CloseGossipMenuFor(player);
-            return true;
-        }
-
-        ReforgeSelection* selection =
-            player->CustomData.GetDefault<ReforgeSelection>(REFORGE_STATE_KEY);
-        if (action == GOSSIP_ACTION_REFORGE_BACK)
-        {
-            BuildSourceMenu(player, creature);
-            return true;
-        }
-        if (action >= GOSSIP_ACTION_REFORGE_DESTINATION)
-        {
-            uint32 index = action - GOSSIP_ACTION_REFORGE_DESTINATION;
-            if (index >= selection->menuGuids.size())
-            {
-                BuildSourceMenu(player, creature);
-                return true;
-            }
-
-            ObjectGuid destinationGuid = selection->menuGuids[index];
-            std::string message;
-            ReforgeFabled(player, selection->sourceGuid, destinationGuid, message);
-            ChatHandler(player->GetSession()).SendSysMessage(message);
-            CloseGossipMenuFor(player);
-            return true;
-        }
-        if (action >= GOSSIP_ACTION_REFORGE_SOURCE)
-        {
-            uint32 index = action - GOSSIP_ACTION_REFORGE_SOURCE;
-            if (index >= selection->menuGuids.size()
-                || !FindCarriedItem(player, selection->menuGuids[index]))
-            {
-                BuildSourceMenu(player, creature);
-                return true;
-            }
-
-            selection->sourceGuid = selection->menuGuids[index];
-            BuildDestinationMenu(player, creature);
-            return true;
-        }
-
-        BuildSourceMenu(player, creature);
-        return true;
-    }
-};
 
 class TertiaryStatsTestSuite final : public TestHarness::Suite
 {
@@ -2732,7 +2719,7 @@ public:
         fabledSettings.chance = savedQualityFabledChance;
         fabledSettings.chanceMultipliers = savedFabledMultipliers;
         context.Expect(qualityChancesMatch,
-            "power slots cascade at seventy percent while quality scales fabled conversion");
+            "power slots cascade at seventy percent while quality scales Fabled provenance");
         bool anchorMapMatches =
             Fabled::AnchorFor(Fabled::Effect::Impact) == Fabled::Anchor::Feet
             && Fabled::AnchorFor(Fabled::Effect::Premonition) == Fabled::Anchor::Trinket
@@ -2844,10 +2831,14 @@ public:
                 deterministicRollSettings, deterministicFabledSettings);
             deterministicFabledItem = Item::CreateItem(16859, 1, actor);
         }
+        BonusDefinition deterministicDefinition;
         context.Expect(deterministicFabledItem
-                && Fabled::EffectFromBonusId(TertiaryBonusOf(deterministicFabledItem))
+                && DecodeBonusId(TertiaryBonusOf(deterministicFabledItem),
+                    deterministicDefinition)
+                && PowerCount(deterministicDefinition.powerMask) == MAX_POWERS_PER_ITEM
+                && Fabled::EffectFromItemBonusSeed(deterministicFabledItem->GetBonusSeed())
                     == Fabled::Effect::Impact,
-            "Fabled conversion chooses the effect assigned to the item's slot");
+            "Fabled provenance rolls in addition to the item's ordinary package");
         if (deterministicFabledItem)
         {
             deterministicFabledItem->RemoveFromWorld();
@@ -2878,95 +2869,41 @@ public:
             suffixItem->RemoveFromWorld();
             delete suffixItem;
         }
-        bool sourceAdded = actor->AddItem(16957, 1);
-        bool destinationAdded = actor->AddItem(12006, 1);
-        Item* reforgeSource = sourceAdded ? actor->GetItemByEntry(16957) : nullptr;
-        Item* reforgeDestination = destinationAdded ? actor->GetItemByEntry(12006) : nullptr;
-        ObjectGuid reforgeSourceGuid = reforgeSource ? reforgeSource->GetGUID() : ObjectGuid::Empty;
-        ObjectGuid reforgeDestinationGuid =
-            reforgeDestination ? reforgeDestination->GetGUID() : ObjectGuid::Empty;
+        bool rerollItemAdded = actor->AddItem(12006, 1);
+        Item* rerollItem = rerollItemAdded ? actor->GetItemByEntry(12006) : nullptr;
+        ObjectGuid rerollGuid = rerollItem ? rerollItem->GetGUID() : ObjectGuid::Empty;
         uint32 savedMoney = actor->GetMoney();
-        uint32 expectedReforgeCost = reforgeDestination
-            ? FabledReforgeCost(reforgeDestination->GetTemplate()) : 0;
-        if (reforgeSource && reforgeDestination)
+        uint8 originalMask = PowerBit(Power::Avoidance) | PowerBit(Power::Fleetfoot);
+        uint16 originalBonusId = EncodeBonusId(originalMask, 100);
+        uint32 expectedRerollCost = rerollItem
+            ? TertiaryRerollCost(rerollItem->GetTemplate()) : 0;
+        if (rerollItem)
         {
-            reforgeSource->SetBonusSeed(
-                MakeItemBonusSeed(Fabled::BonusId(Fabled::Effect::Warcaster)));
-            reforgeDestination->SetBonusSeed(MakeItemBonusSeed(fixedFleetfoot));
-            reforgeSource->SetFlag(ITEM_FIELD_FLAGS, ITEM_FIELD_FLAG_REFUNDABLE);
-            reforgeSource->SetRefundRecipient(actor->GetGUID().GetCounter());
-            reforgeSource->SetPaidMoney(123);
-            AllowedLooterSet sourceAllowedLooters = { actor->GetGUID() };
-            reforgeSource->SetSoulboundTradeable(sourceAllowedLooters);
-            actor->AddTradeableItem(reforgeSource);
-            actor->SetMoney(expectedReforgeCost + 12345);
-            CharacterDatabaseTransaction fixtureTransaction = CharacterDatabase.BeginTransaction();
-            actor->SaveInventoryAndGoldToDB(fixtureTransaction);
-            CharacterDatabase.AsyncCommitTransaction(fixtureTransaction).m_future.get();
-            CharacterDatabase.DirectExecute(
-                "REPLACE INTO `item_refund_instance` (`item_guid`, `player_guid`, `paidMoney`, `paidExtendedCost`) VALUES ({}, {}, 123, 0)",
-                reforgeSourceGuid.GetCounter(), actor->GetGUID().GetCounter());
-            CharacterDatabase.DirectExecute(
-                "REPLACE INTO `item_soulbound_trade_data` (`itemGuid`, `allowedPlayers`) VALUES ({}, '{}')",
-                reforgeSourceGuid.GetCounter(), actor->GetGUID().GetCounter());
+            rerollItem->SetBonusSeed(MakeItemBonusSeed(
+                originalBonusId, 0, uint8(Fabled::Effect::Warcaster)));
+            actor->SetMoney(expectedRerollCost + 12345);
         }
-        std::string reforgeMessage;
-        bool reforged = reforgeSource && reforgeDestination
-            && ReforgeFabled(actor, reforgeSourceGuid, reforgeDestinationGuid, reforgeMessage);
-        Item* reforgedDestination = actor->GetItemByGuid(reforgeDestinationGuid);
-        _reforgeSourceGuid = reforged ? reforgeSourceGuid : ObjectGuid::Empty;
-        context.Expect(reforged && !actor->GetItemByGuid(reforgeSourceGuid)
-                && reforgedDestination
-                && Fabled::EffectFromBonusId(TertiaryBonusOf(reforgedDestination))
+
+        std::string rerollMessage;
+        bool rerolled = rerollItem && RerollTertiary(actor, rerollItem, rerollMessage);
+        Item* rerolledItem = actor->GetItemByGuid(rerollGuid);
+        BonusDefinition rerolledDefinition;
+        bool rerolledOrdinary = rerolledItem
+            && DecodeBonusId(TertiaryBonusOf(rerolledItem), rerolledDefinition);
+        context.Expect(rerolled && rerolledItem
+                && rerolledOrdinary
+                && rerolledDefinition.powerMask != originalMask
+                && PowerCount(rerolledDefinition.powerMask) == PowerCount(originalMask)
+                && rerolledDefinition.pointsPerPower == 100
+                && Fabled::EffectFromItemBonusSeed(rerolledItem->GetBonusSeed())
                     == Fabled::Effect::Warcaster
-                && reforgedDestination->IsSoulBound()
+                && rerolledItem->IsSoulBound()
                 && actor->GetMoney() == 12345,
-            "reforging destroys the source, binds the destination, and charges gold in one transaction",
-            reforgeMessage);
-        if (reforgedDestination)
-            actor->DestroyItem(reforgedDestination->GetBagSlot(), reforgedDestination->GetSlot(), true);
-        if (Item* leftoverSource = actor->GetItemByGuid(reforgeSourceGuid))
-            actor->DestroyItem(leftoverSource->GetBagSlot(), leftoverSource->GetSlot(), true);
+            "reroll changes only the ordinary mask, preserves line count and Fabled provenance",
+            rerollMessage);
+        if (rerolledItem)
+            actor->DestroyItem(rerolledItem->GetBagSlot(), rerolledItem->GetSlot(), true);
         actor->SetMoney(savedMoney);
-
-        bool rollbackSourceAdded = actor->AddItem(16958, 1);
-        Item* rollbackSource = rollbackSourceAdded ? actor->GetItemByEntry(16958) : nullptr;
-        ObjectGuid rollbackSourceGuid = rollbackSource ? rollbackSource->GetGUID() : ObjectGuid::Empty;
-        if (rollbackSource)
-        {
-            rollbackSource->SetFlag(ITEM_FIELD_FLAGS, ITEM_FIELD_FLAG_REFUNDABLE);
-            AllowedLooterSet rollbackAllowedLooters = { actor->GetGUID() };
-            rollbackSource->SetSoulboundTradeable(rollbackAllowedLooters);
-            CharacterDatabaseTransaction fixtureSave = CharacterDatabase.BeginTransaction();
-            actor->SaveInventoryAndGoldToDB(fixtureSave);
-            CharacterDatabase.AsyncCommitTransaction(fixtureSave).m_future.get();
-            CharacterDatabase.DirectExecute(
-                "REPLACE INTO `item_refund_instance` (`item_guid`, `player_guid`, `paidMoney`, `paidExtendedCost`) VALUES ({}, {}, 1, 0)",
-                rollbackSourceGuid.GetCounter(), actor->GetGUID().GetCounter());
-            CharacterDatabase.DirectExecute(
-                "REPLACE INTO `item_soulbound_trade_data` (`itemGuid`, `allowedPlayers`) VALUES ({}, '{}')",
-                rollbackSourceGuid.GetCounter(), actor->GetGUID().GetCounter());
-
-            {
-                CharacterDatabaseTransaction discarded = CharacterDatabase.BeginTransaction();
-                actor->DestroyItem(rollbackSource->GetBagSlot(), rollbackSource->GetSlot(), false, &discarded);
-            }
-            bool refundSurvived = bool(CharacterDatabase.Query(
-                "SELECT 1 FROM `item_refund_instance` WHERE `item_guid` = {}", rollbackSourceGuid.GetCounter()));
-            bool tradeSurvived = bool(CharacterDatabase.Query(
-                "SELECT 1 FROM `item_soulbound_trade_data` WHERE `itemGuid` = {}", rollbackSourceGuid.GetCounter()));
-            context.Expect(refundSurvived && tradeSurvived,
-                "discarding item destruction leaves ancillary refund and BOP-trade rows intact");
-
-            CharacterDatabase.DirectExecute(
-                "DELETE FROM `item_refund_instance` WHERE `item_guid` = {}", rollbackSourceGuid.GetCounter());
-            CharacterDatabase.DirectExecute(
-                "DELETE FROM `item_soulbound_trade_data` WHERE `itemGuid` = {}", rollbackSourceGuid.GetCounter());
-            rollbackSource->RemoveFromWorld();
-            CharacterDatabaseTransaction fixtureCleanup = CharacterDatabase.BeginTransaction();
-            actor->SaveInventoryAndGoldToDB(fixtureCleanup);
-            CharacterDatabase.AsyncCommitTransaction(fixtureCleanup).m_future.get();
-        }
 
 
         TertiaryState* echoState = GetState(actor);
@@ -3056,11 +2993,16 @@ public:
                 && generatedDefinition.pointsPerPower == _pointBudget,
             "generated item deterministically decodes its three-power bonus",
             "bonusId=" + std::to_string(generatedBonusId));
-        context.Expect(TertiaryDefinitionWirePayload(generatedBonusId)
-                == Acore::StringFormat("O:{}:0:1:2", _pointBudget)
-                && TertiaryDefinitionWirePayload(Fabled::BonusId(Fabled::Effect::Warcaster))
-                    == "F:13",
-            "item definitions serialize as semantic ordinary and Fabled protocol records");
+        context.Expect(TertiaryDefinitionWirePayload(
+                    generatedBonusId, Fabled::Effect::None)
+                == Acore::StringFormat("D:{}:{}:0", _pointBudget, uint32(ORDINARY_MASK))
+                && TertiaryDefinitionWirePayload(
+                    generatedBonusId, Fabled::Effect::Warcaster)
+                    == Acore::StringFormat(
+                        "D:{}:{}:13", _pointBudget, uint32(ORDINARY_MASK))
+                && TertiaryDefinitionWirePayload(0, Fabled::Effect::Warcaster)
+                    == "D:0:0:13",
+            "item definitions serialize ordinary powers and Fabled provenance together");
         uint32 bonusSeed = _item->GetBonusSeed();
         context.Expect((bonusSeed >> ITEM_BONUS_SEED_VERSION_SHIFT) == ITEM_BONUS_SEED_VERSION
                 && TertiaryBonusOf(_item) == generatedBonusId,
@@ -3075,6 +3017,82 @@ public:
                 && actor->HasAura(SPELL_FLEETFOOT_GROUND_PASSIVE)
                 && actor->HasAura(SPELL_FLEETFOOT_FLIGHT_PASSIVE),
             "avoidance and fleetfoot passives active");
+
+        _item->SetBonusSeed(MakeItemBonusSeed(
+            generatedBonusId, 0, uint8(Fabled::Effect::Keeper)));
+        std::string attunementMessage;
+        bool learnedKeeper = Fabled::LearnFromEquippedItem(
+            actor, _item, EQUIPMENT_SLOT_CHEST, attunementMessage);
+        state->needsRefresh = true;
+        state = EnsureState(actor);
+        context.Expect(learnedKeeper
+                && Fabled::IsUnlocked(actor, Fabled::Effect::Keeper)
+                && Fabled::AttunedEffect(actor, EQUIPMENT_SLOT_CHEST)
+                    == Fabled::Effect::Keeper
+                && Fabled::Has(Fabled::GetRuntime(actor), Fabled::Effect::Keeper)
+                && HasExactPoints(*state, 0)
+                && TertiaryBonusOf(_item) == generatedBonusId
+                && Fabled::EffectFromItemBonusSeed(_item->GetBonusSeed())
+                    == Fabled::Effect::Keeper,
+            "equipping teaches and attunes a persistent Fabled memory while suppressing its slot",
+            attunementMessage);
+
+        std::string combatClearMessage;
+        bool clearedInCombat = Fabled::ClearAttunement(
+            actor, EQUIPMENT_SLOT_CHEST, combatClearMessage);
+        context.Expect(!clearedInCombat
+                && Fabled::AttunedEffect(actor, EQUIPMENT_SLOT_CHEST)
+                    == Fabled::Effect::Keeper,
+            "combat blocks Fabled attunement changes",
+            combatClearMessage);
+        actor->CombatStop(true);
+        dummy->CombatStop(true);
+        context.Expect(!actor->IsInCombat(),
+            "Fabled attunement changes resume out of combat");
+
+        std::string clearMessage;
+        bool clearedKeeper = Fabled::ClearAttunement(
+            actor, EQUIPMENT_SLOT_CHEST, clearMessage);
+        std::string relearnMessage;
+        bool relearnedKeeper = Fabled::LearnFromEquippedItem(
+            actor, _item, EQUIPMENT_SLOT_CHEST, relearnMessage);
+        state->needsRefresh = true;
+        state = EnsureState(actor);
+        context.Expect(!relearnedKeeper && relearnMessage.empty()
+                && Fabled::AttunedEffect(actor, EQUIPMENT_SLOT_CHEST)
+                    == Fabled::Effect::None
+                && HasExactPoints(*state, ORDINARY_MASK),
+            "equipping an already learned memory preserves the chosen cleared state");
+
+        _item->SetBonusSeed(MakeItemBonusSeed(
+            generatedBonusId, 0, uint8(Fabled::Effect::Warcaster)));
+        std::string legacyMemoryMessage;
+        bool learnedLegacyMemory = Fabled::LearnFromEquippedItem(
+            actor, _item, EQUIPMENT_SLOT_CHEST, legacyMemoryMessage);
+        state->needsRefresh = true;
+        state = EnsureState(actor);
+        context.Expect(learnedLegacyMemory
+                && Fabled::IsUnlocked(actor, Fabled::Effect::Warcaster)
+                && Fabled::AttunedEffect(actor, EQUIPMENT_SLOT_CHEST)
+                    == Fabled::Effect::None
+                && !Fabled::Has(Fabled::GetRuntime(actor), Fabled::Effect::Warcaster)
+                && HasExactPoints(*state, ORDINARY_MASK),
+            "incompatible legacy provenance teaches without inventing an active slot",
+            legacyMemoryMessage);
+        _item->SetBonusSeed(MakeItemBonusSeed(generatedBonusId));
+        state->needsRefresh = true;
+        state = EnsureState(actor);
+        context.Expect(clearedKeeper && HasExactPoints(*state, ORDINARY_MASK)
+                && !Fabled::Has(Fabled::GetRuntime(actor), Fabled::Effect::Keeper),
+            "clearing an attunement restores the exact slot's ordinary package",
+            clearMessage);
+        CharacterDatabase.DirectExecute(
+            "DELETE FROM `mod_tertiary_fabled` WHERE `guid`={} AND `effect` IN ({}, {})",
+            actor->GetGUID().GetCounter(), uint32(Fabled::Effect::Keeper),
+            uint32(Fabled::Effect::Warcaster));
+        context.Expect(context.Engage(dummy->GetGUID()),
+            "hostile target re-engages after attunement changes");
+
 
         constexpr std::array<uint32, 6> KINGS_AURAS = {
             20217, 25898, 43223, 56525, 58054, 72586
@@ -3626,19 +3644,10 @@ public:
             rowFound = true;
         }
 
-        bool reforgeMetadataRemoved = !_reforgeSourceGuid
-            || (!CharacterDatabase.Query(
-                    "SELECT 1 FROM `item_refund_instance` WHERE `item_guid` = {}",
-                    _reforgeSourceGuid.GetCounter())
-                && !CharacterDatabase.Query(
-                    "SELECT 1 FROM `item_soulbound_trade_data` WHERE `itemGuid` = {}",
-                    _reforgeSourceGuid.GetCounter()));
-        if (rowFound && uint16(persistedSeed & ITEM_BONUS_ID_MASK) == _expectedBonusId
-            && reforgeMetadataRemoved)
+        if (rowFound && uint16(persistedSeed & ITEM_BONUS_ID_MASK) == _expectedBonusId)
         {
             context.Expect(true, "item atomically persists its bonus seed",
                 "seed=" + std::to_string(persistedSeed));
-            context.Expect(true, "reforging commits source refund and BOP-trade cleanup atomically");
             context.Finish();
             _stage = Stage::Done;
             return;
@@ -3647,9 +3656,8 @@ public:
         if (_elapsed < 5000)
             return;
 
-        context.Expect(false, "item persistence and reforge metadata cleanup complete",
-            (rowFound ? "seed=" + std::to_string(persistedSeed) : "item row missing")
-                + " reforgeMetadata=" + std::to_string(reforgeMetadataRemoved));
+        context.Expect(false, "item bonus seed persistence completes",
+            rowFound ? "seed=" + std::to_string(persistedSeed) : "item row missing");
         context.Finish();
         _stage = Stage::Done;
     }
@@ -3804,7 +3812,6 @@ private:
     Stage _stage = Stage::Done;
     Item* _item = nullptr;
     ObjectGuid _itemGuid;
-    ObjectGuid _reforgeSourceGuid;
     ObjectGuid _dummyGuid;
     uint16 _pointBudget = 0;
     uint32 _elapsed = 0;
@@ -3826,6 +3833,7 @@ void AddSC_tertiary_stats()
 {
     Fabled::RegisterScripts();
     Fabled::RegisterTests();
+    Fabled::RegisterAttunementSnapshotParticipant();
 
     TestHarness::RegisterSuite("tertiary-stats",
         [] { return std::make_unique<TertiaryStatsTestSuite>(); });
@@ -3852,7 +3860,6 @@ void AddSC_tertiary_stats()
     new TertiaryStatsWorld();
     new TertiaryStatsItem();
     new TertiaryStatsPlayer();
-    new npc_fabled_reforger();
     new TertiaryStatsUnit();
     new TertiaryStatsSpell();
 }

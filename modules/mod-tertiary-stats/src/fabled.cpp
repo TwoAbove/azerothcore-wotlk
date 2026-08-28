@@ -2,6 +2,7 @@
  * mod-tertiary-stats: fabled tier dispatcher.
  */
 #include "fabled.h"
+#include "item_bonus_seed.h"
 
 #include "Config.h"
 #include "GameTime.h"
@@ -87,16 +88,13 @@ void AdvanceDeadline(uint64& deadline, uint64 ms)
 }
 } // namespace
 
-Effect EffectFromBonusId(uint16 bonusId)
+Effect EffectFromItemBonusSeed(uint32 seed)
 {
-    if (!bonusId || (bonusId & ((1u << 7) - 1)))
+    if ((seed >> ITEM_BONUS_SEED_VERSION_SHIFT) != ITEM_BONUS_SEED_VERSION)
         return Effect::None;
 
-    uint16 index = bonusId >> 7;
-    if (index < 1 || index > EFFECT_COUNT)
-        return Effect::None;
-
-    return Effect(index);
+    uint8 index = ItemBonusFabledEffect(seed);
+    return index >= 1 && index <= EFFECT_COUNT ? Effect(index) : Effect::None;
 }
 
 char const* Name(Effect effect)
@@ -150,6 +148,45 @@ Anchor AnchorFor(ItemTemplate const* itemTemplate)
         case INVTYPE_RANGED:
         case INVTYPE_THROWN:
         case INVTYPE_RANGEDRIGHT:
+            return Anchor::Weapon;
+        default:
+            return Anchor::None;
+    }
+}
+
+Anchor AnchorForEquipmentSlot(uint8 slot)
+{
+    switch (slot)
+    {
+        case EQUIPMENT_SLOT_HEAD:
+            return Anchor::Head;
+        case EQUIPMENT_SLOT_NECK:
+            return Anchor::Neck;
+        case EQUIPMENT_SLOT_SHOULDERS:
+            return Anchor::Shoulders;
+        case EQUIPMENT_SLOT_CHEST:
+            return Anchor::Chest;
+        case EQUIPMENT_SLOT_WRISTS:
+            return Anchor::Wrists;
+        case EQUIPMENT_SLOT_HANDS:
+            return Anchor::Hands;
+        case EQUIPMENT_SLOT_WAIST:
+            return Anchor::Waist;
+        case EQUIPMENT_SLOT_LEGS:
+            return Anchor::Legs;
+        case EQUIPMENT_SLOT_FEET:
+            return Anchor::Feet;
+        case EQUIPMENT_SLOT_BACK:
+            return Anchor::Back;
+        case EQUIPMENT_SLOT_FINGER1:
+        case EQUIPMENT_SLOT_FINGER2:
+            return Anchor::Finger;
+        case EQUIPMENT_SLOT_TRINKET1:
+        case EQUIPMENT_SLOT_TRINKET2:
+            return Anchor::Trinket;
+        case EQUIPMENT_SLOT_MAINHAND:
+        case EQUIPMENT_SLOT_OFFHAND:
+        case EQUIPMENT_SLOT_RANGED:
             return Anchor::Weapon;
         default:
             return Anchor::None;
@@ -216,7 +253,7 @@ char const* AnchorName(Anchor anchor)
     }
 }
 
-bool CanReforgeTo(Effect effect, ItemTemplate const* itemTemplate)
+bool CanAttuneTo(Effect effect, ItemTemplate const* itemTemplate)
 {
     return effect != Effect::None && AnchorFor(effect) == AnchorFor(itemTemplate);
 }
@@ -295,15 +332,6 @@ void LoadSettings()
         std::max(0.0f, sConfigMgr->GetOption<float>("TertiaryStats.Fabled.ChanceMultiplier.Rare", 2.0f)),
         std::max(0.0f, sConfigMgr->GetOption<float>("TertiaryStats.Fabled.ChanceMultiplier.Epic", 4.0f))
     };
-    _settings.reforgeEnabled =
-        sConfigMgr->GetOption<bool>("TertiaryStats.Fabled.Reforge.Enable", true);
-    _settings.reforgeVendorMultiplier = std::max(
-        0.0f, sConfigMgr->GetOption<float>("TertiaryStats.Fabled.Reforge.VendorMultiplier", 5.0f));
-    _settings.reforgeMinCost =
-        sConfigMgr->GetOption<uint32>("TertiaryStats.Fabled.Reforge.MinCostCopper", 10000);
-    _settings.reforgeMaxCost = std::max(
-        _settings.reforgeMinCost,
-        sConfigMgr->GetOption<uint32>("TertiaryStats.Fabled.Reforge.MaxCostCopper", 1000000));
 
     _settings.impactRadiusYd = std::max(1.0f, sConfigMgr->GetOption<float>("TertiaryStats.Fabled.Impact.RadiusYd", 20.0f));
 

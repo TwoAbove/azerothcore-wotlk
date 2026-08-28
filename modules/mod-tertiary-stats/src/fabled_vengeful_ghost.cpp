@@ -226,7 +226,7 @@ public:
         }
         actor->SetFullHealth();
 
-        _equipped = Test::EquipFabledTrinket(actor, Effect::VengefulGhost) != nullptr;
+        _equipped = Test::EquipFabled(actor, Effect::VengefulGhost) != nullptr;
         context.Expect(_equipped, "Vengeful Ghost trinket equipped");
         context.Expect(actor->HasAura(SPELL_VENGEFUL_GUARD),
             "Vengeful Ghost equips its native absorb guard");
