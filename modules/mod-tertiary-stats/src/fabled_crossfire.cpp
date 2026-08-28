@@ -98,7 +98,7 @@ public:
         TestSettings(actor).crossfirePct = 30.0f;
         TestSettings(actor).crossfireRangeYd = 40.0f;
 
-        _equipped = Test::EquipFabledTrinket(actor, Effect::Crossfire) != nullptr;
+        _equipped = Test::EquipFabled(actor, Effect::Crossfire) != nullptr;
         context.Expect(_equipped, "Crossfire trinket equips");
         if (!_equipped)
         {

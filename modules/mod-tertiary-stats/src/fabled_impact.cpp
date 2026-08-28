@@ -67,7 +67,7 @@ public:
         _settingsSaved = true;
         TestSettings(actor).impactRadiusYd = 20.0f;
 
-        _equipped = Test::EquipFabledTrinket(actor, Effect::Impact) != nullptr;
+        _equipped = Test::EquipFabled(actor, Effect::Impact) != nullptr;
         context.Expect(_equipped, "Impact fabled trinket equipped");
         if (!_equipped)
         {

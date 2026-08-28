@@ -130,7 +130,7 @@ public:
         actor->RemoveAurasDueToSpell(TEST_ROOT_SPELL);
         actor->RemoveAurasDueToSpell(TEST_SELF_STUN_SPELL);
         actor->RemoveAurasDueToSpell(TEST_STUN_SPELL);
-        _equipped = Test::EquipFabledTrinket(actor, Effect::Indomitable) != nullptr;
+        _equipped = Test::EquipFabled(actor, Effect::Indomitable) != nullptr;
         context.Expect(_equipped && GetRuntime(actor).indomitable.ready,
             "Indomitable readies when equipped outside combat");
 

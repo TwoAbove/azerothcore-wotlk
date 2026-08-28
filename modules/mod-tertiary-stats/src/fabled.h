@@ -1,13 +1,14 @@
 /*
  * mod-tertiary-stats: fabled tier.
- * Fabled effects are rule-changing bonuses rolled as a regular tertiary outcome.
- * A fabled item carries exactly one purple effect line and no stat points; its
- * bonus id lives in the reserved namespace (power_mask = 0): id = effect << 7.
+ * Fabled provenance is a permanent item marker rolled in addition to ordinary
+ * tertiary powers. Equipping the item teaches its effect to the character and
+ * initially attunes that effect to the item's exact equipment slot. Active
+ * attunements suppress the ordinary package in their occupied slots.
  *
  * Every effect has one home anchor (AnchorFor). Utility anchors host a single
  * effect; Finger and Trinket host pools of combat effects, so the two ring and
  * two trinket slots cap how many combat effects can compound. Anchors with an
- * empty pool roll ordinary stat powers only.
+ * empty pool never roll Fabled provenance.
  *
  * Each effect lives in its own fabled_<name>.cpp implementing one Fabled::Script
  * subclass and its own test-harness suite ("fabled-<name>"). The dispatcher in
@@ -66,13 +67,7 @@ enum class Effect : uint8
 
 constexpr uint8 EFFECT_COUNT = uint8(Effect::Max) - 1;
 
-constexpr uint16 BonusId(Effect effect)
-{
-    return uint16(uint16(effect) << 7);
-}
-
-// Returns Effect::None unless bonusId is a well-formed fabled id.
-Effect EffectFromBonusId(uint16 bonusId);
+Effect EffectFromItemBonusSeed(uint32 seed);
 char const* Name(Effect effect);
 
 constexpr uint16 EffectBit(Effect effect)
@@ -98,15 +93,16 @@ enum class Anchor : uint8
     Max
 };
 
-// The effect's home anchor: the only equipment family it can roll on or be
-// reforged onto.
+// Effects and equipment slots retain their natural anchors after the memory is
+// learned. An attunement is active only while compatible gear occupies its slot.
 Anchor AnchorFor(Effect effect);
 Anchor AnchorFor(ItemTemplate const* itemTemplate);
+Anchor AnchorForEquipmentSlot(uint8 slot);
 // Effects that can roll on this anchor. Empty = ordinary powers only.
 std::span<Effect const> EffectPoolFor(Anchor anchor);
 std::span<Effect const> EffectPoolFor(ItemTemplate const* itemTemplate);
 char const* AnchorName(Anchor anchor);
-bool CanReforgeTo(Effect effect, ItemTemplate const* itemTemplate);
+bool CanAttuneTo(Effect effect, ItemTemplate const* itemTemplate);
 
 
 // Custom spells shipped via the client MPQ patch + server DBC (see
@@ -129,12 +125,8 @@ constexpr uint32 SPELL_LAST = SPELL_VENGEFUL_GUARD;
 
 struct Settings
 {
-    float chance = 2.0f;                     // slice of successful first rolls that become fabled
+    float chance = 2.0f;                     // chance after the first successful ordinary roll
     std::array<float, 3> chanceMultipliers = { 1.0f, 2.0f, 4.0f };
-    bool reforgeEnabled = true;
-    float reforgeVendorMultiplier = 5.0f;
-    uint32 reforgeMinCost = 10000;
-    uint32 reforgeMaxCost = 1000000;
 
     float impactRadiusYd = 20.0f;
 
@@ -186,7 +178,7 @@ struct KeeperAuraState
 // Per-player fabled state. All *Ms fields are absolute GameTime milliseconds.
 struct Runtime : public DataMap::Base
 {
-    uint16 mask = 0;                         // EffectBit() of equipped effects
+    uint16 mask = 0;                         // EffectBit() of active attunements
     std::unique_ptr<Settings> testSettings;  // TestHarness actor-only override.
 
     struct IndomitableState
@@ -328,6 +320,17 @@ void RegisterOverkillTests();
 void RegisterBloodMagicTests();
 void RegisterWarcasterTests();
 void RegisterIndomitableTests();
+
+// Per-character Fabled memories. Item markers are permanent provenance; the
+// learned effect and active equipment slot live in the characters database.
+void LoadAttunements(Player* player);
+uint16 UnlockedEffects(Player* player);
+bool IsUnlocked(Player* player, Effect effect);
+Effect AttunedEffect(Player* player, uint8 slot);
+bool SetAttunement(Player* player, Effect effect, uint8 slot, std::string& message);
+bool ClearAttunement(Player* player, uint8 slot, std::string& message);
+bool LearnFromEquippedItem(Player* player, Item* item, uint8 slot, std::string& message);
+void RegisterAttunementSnapshotParticipant();
 
 // Dispatcher API used by tertiary_stats.cpp.
 void RegisterScripts();

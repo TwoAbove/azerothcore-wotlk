@@ -131,7 +131,7 @@ public:
 
         context.DespawnAllDummies();
         Test::UnequipFabled(actor, Effect::Ghostwalk);
-        _equipped = Test::EquipFabledTrinket(actor, Effect::Ghostwalk) != nullptr;
+        _equipped = Test::EquipFabled(actor, Effect::Ghostwalk) != nullptr;
         context.Expect(_equipped, "Ghostwalk fabled trinket equips");
         if (!_equipped)
         {

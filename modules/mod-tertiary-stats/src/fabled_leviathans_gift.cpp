@@ -92,7 +92,7 @@ public:
         actor->RemoveAurasDueToSpell(SPELL_LEVIATHAN_PASSIVE);
         _baseSwimRate = actor->GetSpeedRate(MOVE_SWIM);
 
-        _equipped = Test::EquipFabledTrinket(actor, Effect::LeviathansGift) != nullptr;
+        _equipped = Test::EquipFabled(actor, Effect::LeviathansGift) != nullptr;
         context.Expect(_equipped, "Leviathan's Gift trinket equips");
         if (!_equipped)
         {

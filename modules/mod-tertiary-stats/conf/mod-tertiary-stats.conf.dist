@@ -42,6 +42,18 @@ TertiaryStats.Roll.Weight.Unbroken = 1
 TertiaryStats.Roll.Weight.Opportunity = 1
 
 ########################################
+# Tertiary rerolls
+#   The character addon can reroll an item's ordinary tertiary package while
+#   preserving its number of powers and any Fabled provenance. A successful
+#   reroll soulbinds the item and costs its vendor price multiplied by
+#   VendorMultiplier, clamped to this copper range.
+
+TertiaryStats.Reroll.Enable = 1
+TertiaryStats.Reroll.VendorMultiplier = 5
+TertiaryStats.Reroll.MinCostCopper = 10000
+TertiaryStats.Reroll.MaxCostCopper = 1000000
+
+########################################
 # Eligibility
 #   Item quality values: 0 poor, 1 common, 2 uncommon, 3 rare, 4 epic,
 #   5 legendary, 6 artifact, 7 heirloom.
@@ -134,27 +146,20 @@ TertiaryStats.Opportunity.DurationMs = 8000
 
 ########################################
 # Fabled
-#   Rule-changing effects rolled as a regular tertiary outcome. An item that
-#   wins its first PowerChance roll has Fabled.Chance multiplied by its quality
-#   multiplier odds of becoming fabled instead of rolling stat powers.
+#   Fabled provenance is an additional rare roll on items that win their first
+#   PowerChance roll; it does not replace the item's ordinary powers. Equipping
+#   a Fabled item permanently teaches and initially attunes its effect to that
+#   equipment slot. The item remains visibly Fabled forever. An active
+#   attunement suppresses the ordinary package in its exact slot.
 #   Head, chest, legs, feet, and back each have one utility effect; weapons
-#   have Overkill. Rings roll Crossfire, Momentum, Warcaster, or Blood Magic.
-#   Trinkets roll Premonition, Vengeful Ghost, Alchemist's Gut, or Indomitable.
-#   Other item types roll ordinary powers.
+#   have Overkill. Rings carry Crossfire, Momentum, Warcaster, or Blood Magic.
+#   Trinkets carry Premonition, Vengeful Ghost, Alchemist's Gut, or Indomitable.
 
 TertiaryStats.Fabled.Chance = 2
 TertiaryStats.Fabled.ChanceMultiplier.Uncommon = 1
 TertiaryStats.Fabled.ChanceMultiplier.Rare = 2
 TertiaryStats.Fabled.ChanceMultiplier.Epic = 4
 
-# Reforging consumes a Fabled source item and transfers its effect to a
-# compatible non-Fabled bag item. The destination becomes soulbound and loses
-# any ordinary tertiary bonus. Cost is the destination's vendor price multiplied
-# by VendorMultiplier and clamped to this copper range.
-TertiaryStats.Fabled.Reforge.Enable = 1
-TertiaryStats.Fabled.Reforge.VendorMultiplier = 5
-TertiaryStats.Fabled.Reforge.MinCostCopper = 10000
-TertiaryStats.Fabled.Reforge.MaxCostCopper = 1000000
 
 # Impact: fall damage becomes an AoE hit around your landing point.
 TertiaryStats.Fabled.Impact.RadiusYd = 20

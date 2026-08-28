@@ -90,7 +90,7 @@ public:
         }
 
         _baselineRunSpeed = _actor->GetSpeedRate(MOVE_RUN);
-        _equipped = Test::EquipFabledTrinket(_actor, Effect::Momentum) != nullptr;
+        _equipped = Test::EquipFabled(_actor, Effect::Momentum) != nullptr;
         context.Expect(_equipped, "Momentum fabled trinket equipped");
         if (!_equipped)
         {

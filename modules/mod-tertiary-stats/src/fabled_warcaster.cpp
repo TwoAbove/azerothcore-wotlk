@@ -67,7 +67,7 @@ public:
         if (!_hadChannelSpell)
             actor->learnSpell(TEST_CHANNEL_SPELL, true);
 
-        _equipped = Test::EquipFabledTrinket(actor, Effect::Warcaster) != nullptr;
+        _equipped = Test::EquipFabled(actor, Effect::Warcaster) != nullptr;
         context.Expect(_equipped, "Warcaster trinket equipped");
 
         Creature* dummy = context.SpawnDummy();

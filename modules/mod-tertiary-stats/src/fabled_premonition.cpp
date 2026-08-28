@@ -75,7 +75,7 @@ public:
             return;
         }
 
-        _equipped = Test::EquipFabledTrinket(actor, Effect::Premonition) != nullptr;
+        _equipped = Test::EquipFabled(actor, Effect::Premonition) != nullptr;
         context.Expect(_equipped, "Premonition trinket equipped");
         if (!_equipped)
         {

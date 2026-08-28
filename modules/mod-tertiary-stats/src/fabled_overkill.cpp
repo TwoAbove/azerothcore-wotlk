@@ -123,7 +123,7 @@ public:
         TestSettings(actor).overkillWindowMs = 1000;
 
         Test::UnequipFabled(actor, Effect::Overkill);
-        _equipped = Test::EquipFabledTrinket(actor, Effect::Overkill) != nullptr;
+        _equipped = Test::EquipFabled(actor, Effect::Overkill) != nullptr;
         context.Expect(_equipped, "Overkill fabled trinket equipped");
         if (!_equipped)
         {
