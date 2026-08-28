@@ -666,7 +666,7 @@ public:
 
         Position position = actor->GetNearPosition(std::max(1.0f, distance), angleOffset);
         position.SetOrientation(position.GetAbsoluteAngle(actor));
-        TempSummon* dummy = actor->GetMap()->SummonCreature(entry, position, nullptr, 0, actor);
+        TempSummon* dummy = actor->GetMap()->SummonCreature(entry, position, nullptr, 0, nullptr);
         if (!dummy)
             return nullptr;
 
@@ -2185,6 +2185,8 @@ public:
         _secondGuid = _second->GetGUID();
         context.Expect(context.GetCreature(_firstGuid) == _first && context.GetUnit(_secondGuid) == _second,
             "GUID lookup resolves live objects");
+        context.Expect(actor->IsHostileTo(_first) && actor->IsHostileTo(_second),
+            "dummies are hostile to the actor");
         context.Expect(context.Engage(_firstGuid) && context.Engage(_secondGuid),
             "dummies engaged without autonomous AI");
         context.Expect(context.Damage(_firstGuid, 111) && context.Damage(_secondGuid, 222),

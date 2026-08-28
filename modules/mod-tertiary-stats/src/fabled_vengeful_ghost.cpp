@@ -236,15 +236,14 @@ public:
             return;
         }
 
-        Creature* firstDummy = context.SpawnDummy();
-        context.Expect(firstDummy != nullptr, "first hostile dummy spawned");
-        if (!firstDummy)
+        Creature* absorbDummy = context.SpawnDummy();
+        context.Expect(absorbDummy != nullptr, "shield-order dummy spawned");
+        if (!absorbDummy)
         {
             CleanupAndFinish(context);
             return;
         }
-        _firstDummyGuid = firstDummy->GetGUID();
-        context.Expect(context.Engage(_firstDummyGuid), "first dummy engaged");
+        context.Expect(context.Engage(absorbDummy->GetGUID()), "shield-order dummy engaged");
 
         CustomSpellValues shieldValues;
         shieldValues.AddSpellMod(SPELLVALUE_BASE_POINT0, int32(std::min<uint64>(
@@ -254,13 +253,22 @@ public:
         context.Expect(actor->HasAura(SPELL_TEST_SCHOOL_ABSORB),
             "ordinary school absorb applied ahead of Vengeful");
         uint32 shieldedHealth = actor->GetHealth();
-        DealNativeTestDamage(firstDummy, actor);
+        DealNativeTestDamage(absorbDummy, actor);
         context.Expect(actor->GetHealth() == shieldedHealth
                 && !runtime.vengefulGhost.phaseActive
                 && !actor->HasSpellCooldown(SPELL_VENGEFUL_COOLDOWN),
             "ordinary school absorb resolves before the last-ordered Vengeful guard");
         actor->RemoveAurasDueToSpell(SPELL_TEST_SCHOOL_ABSORB);
 
+        Creature* firstDummy = context.SpawnDummy(3.0f, 0.2f);
+        context.Expect(firstDummy != nullptr, "first lethal dummy spawned");
+        if (!firstDummy)
+        {
+            CleanupAndFinish(context);
+            return;
+        }
+        _firstDummyGuid = firstDummy->GetGUID();
+        context.Expect(context.Engage(_firstDummyGuid), "first lethal dummy engaged");
         uint32 firstLethalHealth = actor->GetHealth();
         context.ClearEvents();
         DealNativeTestDamage(firstDummy, actor);
