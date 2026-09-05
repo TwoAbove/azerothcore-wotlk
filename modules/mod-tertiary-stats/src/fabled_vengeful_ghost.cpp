@@ -29,6 +29,28 @@ void RemovePhase(Player* player, Runtime& runtime)
     runtime.vengefulGhost.phaseEndMs = 0;
 }
 
+// Clear the obligation before killing: death hooks may re-enter phase cleanup.
+void SettlePhase(Player* player, Runtime& runtime)
+{
+    bool phaseActive = runtime.vengefulGhost.phaseActive;
+    RemovePhase(player, runtime);
+    if (phaseActive && player->IsAlive())
+        Unit::Kill(player, player);
+}
+
+class VengefulGhostPlayerScript final : public PlayerScript
+{
+public:
+    VengefulGhostPlayerScript()
+        : PlayerScript("fabled_vengeful_ghost_player", { PLAYERHOOK_ON_BEFORE_LOGOUT }) { }
+
+    void OnPlayerBeforeLogout(Player* player) override
+    {
+        if (Runtime* runtime = FindRuntime(player); runtime && runtime->vengefulGhost.phaseActive)
+            SettlePhase(player, *runtime);
+    }
+};
+
 void ApplyPhase(Player* player, uint32 phaseMs)
 {
     int32 durationMs = int32(std::min<uint32>(phaseMs, uint32(std::numeric_limits<int32>::max())));
@@ -150,10 +172,7 @@ public:
         }
 
         player->RemoveAurasDueToSpell(SPELL_VENGEFUL_GUARD);
-        bool phaseActive = runtime.vengefulGhost.phaseActive;
-        RemovePhase(player, runtime);
-        if (phaseActive && player->IsAlive())
-            Unit::Kill(player, player);
+        SettlePhase(player, runtime);
     }
 
     void OnUpdate(Player* player, Runtime& runtime, uint32 /*diffMs*/, uint64 nowMs) override
@@ -161,8 +180,7 @@ public:
         if (!runtime.vengefulGhost.phaseActive || nowMs < runtime.vengefulGhost.phaseEndMs)
             return;
 
-        RemovePhase(player, runtime);
-        Unit::Kill(player, player);
+        SettlePhase(player, runtime);
     }
 
     void OnKill(Player* player, Runtime& runtime, Unit* /*victim*/, bool /*xpEligible*/) override
@@ -307,6 +325,10 @@ public:
         context.Expect(actor->HasSpellCooldown(SPELL_VENGEFUL_COOLDOWN),
             "phase activation starts the native persisted lockout");
 
+        sScriptMgr->OnPlayerBeforeLogout(actor);
+        context.Expect(actor->IsAlive() && actor->GetHealth() == expectedRestoredHealth,
+            "logout after earning a phase kill does not kill or alter the actor");
+
         actor->RemoveSpellCooldown(SPELL_VENGEFUL_COOLDOWN);
         context.Expect(!actor->HasSpellCooldown(SPELL_VENGEFUL_COOLDOWN),
             "test clears the lockout before retriggering");
@@ -353,6 +375,31 @@ public:
             "phase expiry clears its marker and active state");
         context.Expect(actor->HasSpellCooldown(SPELL_VENGEFUL_COOLDOWN),
             "phase expiry preserves the configured lockout");
+
+        actor->ResurrectPlayer(1.0f);
+        actor->SpawnCorpseBones();
+        actor->SetFullHealth();
+        actor->RemoveSpellCooldown(SPELL_VENGEFUL_COOLDOWN);
+        SetMask(actor, runtime.mask);
+        Creature* logoutDummy = context.GetCreature(_secondDummyGuid);
+        context.Expect(logoutDummy != nullptr, "logout phase attacker remains available");
+        if (logoutDummy)
+        {
+            DealNativeTestDamage(logoutDummy, actor);
+            context.Expect(actor->IsAlive() && runtime.vengefulGhost.phaseActive,
+                "lethal damage arms a fresh phase before logout");
+            // Exercise the production pre-save hook without destroying the harness session.
+            sScriptMgr->OnPlayerBeforeLogout(actor);
+            context.Expect(!actor->IsAlive() && !runtime.vengefulGhost.phaseActive
+                    && !actor->HasAura(SPELL_VENGEFUL_PHASE),
+                "logout settles an unearned phase as real death before character saving");
+            sScriptMgr->OnPlayerBeforeLogout(actor);
+            actor->ResurrectPlayer(1.0f);
+            actor->SpawnCorpseBones();
+            sScriptMgr->OnPlayerBeforeLogout(actor);
+            context.Expect(actor->IsAlive(),
+                "settled phase cannot kill again on a later logout after resurrection");
+        }
 
         CleanupAndFinish(context);
     }
@@ -417,6 +464,7 @@ private:
 void RegisterVengefulGhostSpellScripts()
 {
     RegisterSpellScript(spell_fabled_vengeful_guard);
+    new VengefulGhostPlayerScript();
 }
 
 std::unique_ptr<Script> MakeVengefulGhost()
