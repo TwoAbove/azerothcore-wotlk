@@ -20,8 +20,8 @@ SET @GO_CHEST_HARD        := 194200; -- GO_HODIR_CHEST_HARD        (Rare Cache o
 SET @GO_CHEST_NORMAL_HERO := 194308; -- GO_HODIR_CHEST_NORMAL_HERO (Cache of Winter, 25m)
 SET @GO_CHEST_HARD_HERO   := 194201; -- GO_HODIR_CHEST_HARD_HERO   (Rare Cache of Winter, 25m)
 
--- Free guid block. Verify with: SELECT MAX(`guid`) + 1 FROM `gameobject`;
-SET @OGUID := 5714442;
+-- Module spawns can occupy upstream's GUID range; instance lookup uses entry IDs.
+SET @OGUID := (SELECT COALESCE(MAX(`guid`), 0) + 1 FROM `gameobject`);
 
 -- Deleting by id (not by guid range) so a wrong @OGUID can never wipe unrelated spawns.
 DELETE FROM `gameobject` WHERE `id` IN (@GO_CHEST_NORMAL, @GO_CHEST_HARD, @GO_CHEST_NORMAL_HERO, @GO_CHEST_HARD_HERO);
