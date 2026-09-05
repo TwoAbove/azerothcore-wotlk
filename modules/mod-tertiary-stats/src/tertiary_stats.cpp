@@ -1695,8 +1695,8 @@ bool IsOpportunityAbility(Spell* spell)
         && spellInfo->SpellFamilyName != SPELLFAMILY_GENERIC
         && !spellInfo->HasAttribute(SPELL_ATTR0_IS_TRADESKILL)
         && !spellInfo->IsAutoRepeatRangedSpell()
-        && (HasDirectCritEffect(spellInfo) || HasPeriodicCritEffect(spellInfo)
-            || HasDeferredAreaCritOutput(spellInfo) || HasCritCapableChannelOutput(spellInfo)
+        && (HasDirectCritEffect(spellInfo) || IsPeriodicAreaCandidate(spellInfo)
+            || HasCritCapableChannelOutput(spellInfo)
             || (!spellInfo->IsPositive() && HasScriptedCritOutput(spellInfo)));
 }
 
@@ -2600,7 +2600,8 @@ public:
         Unit const* /*target*/, float& critChance) override
     {
         if (!_settings.enabled || !_dbcReady || !spellInfo || !caster
-            || !HasPeriodicCritEffect(spellInfo))
+            || !HasPeriodicCritEffect(spellInfo)
+            || (!spellInfo->IsChanneled() && !IsPeriodicAreaCandidate(spellInfo)))
             return;
 
         Player* player = caster->GetCharmerOrOwnerPlayerOrPlayerItself();
@@ -3480,6 +3481,23 @@ public:
                     == std::lround(expectedOpportunityPpm * 1000.0f),
                 "opportunity ppm combines its base and equipped points",
                 "ppm=" + std::to_string(OpportunityPpm(*state)));
+            SpellInfo const* painInfo = sSpellMgr->GetSpellInfo(589);
+            Unit* dotTarget = context.GetUnit(_dummyGuid);
+            context.Expect(painInfo && dotTarget, "persistent DoT test spell and target resolve");
+            if (painInfo && dotTarget)
+            {
+                CastTertiarySpell(actor, *state, actor, SPELL_OPPORTUNITY, 0, 0, 0,
+                    _settings.opportunityDurationMs);
+                Spell pain(actor, painInfo, TRIGGERED_NONE);
+                sScriptMgr->OnPlayerSpellCast(actor, &pain, false);
+                Aura* dot = actor->AddAura(painInfo->Id, dotTarget);
+                context.Expect(actor->HasAura(SPELL_OPPORTUNITY) && dot
+                        && dot->GetEffect(EFFECT_0)
+                        && dot->GetEffect(EFFECT_0)->GetCritChance() < 100.0f,
+                    "persistent DoTs neither consume Opportunity nor snapshot guaranteed criticals");
+                sScriptMgr->OnSpellCast(&pain, actor, painInfo, false);
+                dotTarget->RemoveAurasDueToSpell(painInfo->Id, actor->GetGUID());
+            }
 
             SpellInfo const* opportunitySpellInfo = sSpellMgr->GetSpellInfo(133); // Fireball
             context.Expect(opportunitySpellInfo != nullptr, "opportunity test spell resolved");
@@ -3493,6 +3511,12 @@ public:
                 bool claimed = state->opportunityCast == &opportunitySpell;
                 float critChance = 0.0f;
                 sScriptMgr->OnCalcCritChance(&opportunitySpell, target, critChance);
+                Aura* attachedDot = actor->AddAura(opportunitySpellInfo->Id, target);
+                context.Expect(attachedDot && attachedDot->GetEffect(EFFECT_1)
+                        && attachedDot->GetEffect(EFFECT_1)->GetCritChance() < 100.0f,
+                    "Opportunity empowers direct damage without empowering its attached DoT");
+                if (target)
+                    target->RemoveAurasDueToSpell(opportunitySpellInfo->Id, actor->GetGUID());
                 sScriptMgr->OnSpellCast(&opportunitySpell, actor, opportunitySpellInfo, false);
                 context.Expect(claimed && !actor->HasAura(SPELL_OPPORTUNITY)
                         && critChance == 100.0f,
