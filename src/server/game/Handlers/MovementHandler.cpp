@@ -669,6 +669,9 @@ bool WorldSession::ProcessMovementInfo(MovementInfo& movementInfo, Unit* mover, 
 
     HandleMoverRelocation(movementInfo, mover);
 
+    if (plrMover)
+        sScriptMgr->OnPlayerAfterMove(plrMover, opcode);
+
     if (plrMover && opcode != CMSG_MOVE_KNOCK_BACK_ACK)
         plrMover->UpdateFallInformationIfNeed(movementInfo, opcode);
 

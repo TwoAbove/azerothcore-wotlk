@@ -8,8 +8,11 @@
 #include "CellImpl.h"
 #include "Creature.h"
 #include "GridNotifiers.h"
+#include "Opcodes.h"
 #include "Player.h"
 #include "SharedDefines.h"
+#include "WorldPacket.h"
+#include "WorldSession.h"
 #include "test_harness.h"
 
 #include <list>
@@ -25,13 +28,32 @@ class ImpactScript final : public Script
 public:
     ImpactScript() : Script(Effect::Impact) { }
 
-    void OnEnvironmentalDamage(Player* player, Runtime& /*runtime*/, EnviromentalDamage type, uint32& damage) override
+    void OnRefresh(Player* /*player*/, Runtime& runtime, bool active) override
+    {
+        if (!active)
+            runtime.impact.pendingFallDamage = 0;
+    }
+
+    void OnDeath(Player* /*player*/, Runtime& runtime) override
+    {
+        runtime.impact.pendingFallDamage = 0;
+    }
+
+    void OnEnvironmentalDamage(Player* /*player*/, Runtime& runtime, EnviromentalDamage type, uint32& damage) override
     {
         if (type != DAMAGE_FALL || !damage)
             return;
 
-        uint32 preventedDamage = damage;
+        runtime.impact.pendingFallDamage = damage;
         damage = 0;
+    }
+
+    void OnAfterMove(Player* player, Runtime& runtime, uint32 opcode) override
+    {
+        uint32 preventedDamage = runtime.impact.pendingFallDamage;
+        runtime.impact.pendingFallDamage = 0;
+        if (opcode != MSG_MOVE_FALL_LAND || !preventedDamage || !player->IsAlive())
+            return;
 
         float radius = GetSettings(player).impactRadiusYd;
         std::list<Unit*> nearby;
@@ -115,19 +137,31 @@ public:
             if (_elapsedMs < 100)
                 return;
             _elapsedMs = 0;
-            constexpr uint32 FALL_DAMAGE = 1234;
+            Position landing = actor->GetPosition();
+            // The last airborne position is outside both targets' radius.
+            actor->UpdatePosition(landing.GetPositionX() - 40.0f, landing.GetPositionY(),
+                landing.GetPositionZ() + 40.0f, landing.GetOrientation());
+            actor->SetFallInformation(0, landing.GetPositionZ() + 40.0f);
             actor->SetHealth(actor->GetMaxHealth());
             uint32 actorHealthBefore = actor->GetHealth();
             _firstHealthBefore = first->GetHealth();
             _secondHealthBefore = second->GetHealth();
 
-            uint32 dealtToActor = actor->EnvironmentalDamage(DAMAGE_FALL, FALL_DAMAGE);
+            MovementInfo movement = actor->m_movementInfo;
+            movement.pos = landing;
+            movement.flags = MOVEMENTFLAG_NONE;
+            movement.fallTime = 2000;
+            WorldPacket packet(MSG_MOVE_FALL_LAND);
+            bool moved = actor->GetSession()->ProcessMovementInfo(movement, actor, actor, packet);
 
-            context.Expect(dealtToActor == 0 && actor->GetHealth() == actorHealthBefore,
-                "Impact prevents all fall damage",
-                "reported=" + std::to_string(dealtToActor)
-                    + ",before=" + std::to_string(actorHealthBefore)
-                    + ",after=" + std::to_string(actor->GetHealth()));
+            context.Expect(moved && actor->GetExactDist(&landing) < 0.1f,
+                "validated landing packet relocates the airborne actor");
+            context.Expect(actor->GetHealth() == actorHealthBefore,
+                "Impact prevents fall damage during movement processing");
+            // Resolve now, not at the next update's (possibly different) position.
+            context.Expect(first->GetHealth() < _firstHealthBefore
+                    && second->GetHealth() < _secondHealthBefore,
+                "landing AoE resolves at the relocated position before movement returns");
             _stage = Stage::AwaitImpact;
             _elapsedMs = 0;
             return;

@@ -500,6 +500,7 @@ public: /* PlayerScript */
     void OnPlayerGetReputationPriceDiscount(Player const* player, FactionTemplateEntry const* factionTemplate, float& discount);
     void OnPlayerLearnTaxiNode(Player const* player, uint32 nodeId);
     void OnPlayerBeforeGetLevelForXPGain(Player const* player, uint8& level);
+    void OnPlayerAfterMove(Player* player, uint32 opcode);
 
     // Anti cheat
     void AnticheatSetCanFlybyServer(Player* player, bool apply);

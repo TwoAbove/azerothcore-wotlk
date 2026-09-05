@@ -10,6 +10,7 @@
 #include "Spell.h"
 #include "ScriptMgr.h"
 #include "SpellDefines.h"
+#include "SpellMgr.h"
 
 #include <limits>
 #include <memory>
@@ -33,9 +34,7 @@ void ClearBank(Runtime& runtime)
 
 void ClearPending(Runtime& runtime)
 {
-    runtime.overkill.pendingTarget.Clear();
-    runtime.overkill.pendingDamage = 0;
-    runtime.overkill.pendingSchoolMask = SPELL_SCHOOL_MASK_NONE;
+    runtime.overkill.pending.clear();
 }
 void CastTestDamage(Player* player, Unit* target)
 {
@@ -62,18 +61,19 @@ public:
         if (runtime.overkill.bank && runtime.overkill.expiresMs && nowMs >= runtime.overkill.expiresMs)
             ClearBank(runtime);
 
-        if (!runtime.overkill.pendingDamage)
-            return;
+        // Detach the batch: native damage callbacks may modify runtime state.
+        std::vector<Runtime::OverkillState::Discharge> pending;
+        pending.swap(runtime.overkill.pending);
+        for (auto const& discharge : pending)
+            if (Unit* target = ObjectAccessor::GetUnit(*player, discharge.target);
+                target && target->IsAlive())
+                CastEffectDamage(player, target, discharge.damage, discharge.schoolMask,
+                    SPELL_OVERKILL_DAMAGE);
 
-        ObjectGuid targetGuid = runtime.overkill.pendingTarget;
-        uint64 damage = runtime.overkill.pendingDamage;
-        SpellSchoolMask schoolMask = runtime.overkill.pendingSchoolMask;
-        ClearPending(runtime);
-        if (Unit* target = ObjectAccessor::GetUnit(*player, targetGuid);
-            target && target->IsAlive())
-        {
-            CastEffectDamage(player, target, damage, schoolMask, SPELL_OVERKILL_DAMAGE);
-        }
+        // Retain capacity for the next native multi-target action.
+        pending.clear();
+        if (runtime.overkill.pending.empty())
+            pending.swap(runtime.overkill.pending);
     }
 
     void OnBeforeDealtDamage(Player* /*player*/, Runtime& runtime, Unit* victim,
@@ -84,9 +84,8 @@ public:
             || !victim || !victim->IsAlive())
             return;
 
-        runtime.overkill.pendingTarget = victim->GetGUID();
-        runtime.overkill.pendingDamage = runtime.overkill.bank;
-        runtime.overkill.pendingSchoolMask = runtime.overkill.schoolMask;
+        runtime.overkill.pending.push_back(
+            { victim->GetGUID(), runtime.overkill.bank, runtime.overkill.schoolMask });
         ClearBank(runtime);
     }
     void OnDealtDamageFinal(Player* player, Runtime& runtime, Unit* victim, uint32 damage,
@@ -176,6 +175,21 @@ public:
             Finish(context);
             return;
         }
+        if (_stage == Stage::AwaitBatch)
+        {
+            auto const* first = context.FindEvent(TestHarness::EventType::DamageFinal,
+                actor->GetGUID(), _baselineGuid, SPELL_OVERKILL_DAMAGE);
+            auto const* last = context.FindEvent(TestHarness::EventType::DamageFinal,
+                actor->GetGUID(), _spendGuid, SPELL_OVERKILL_DAMAGE);
+            if ((!first || !last) && _elapsedMs < TEST_TIMEOUT_MS)
+                return;
+            context.Expect(first && uint64(first->amount) == _firstBatchBank,
+                "first surviving AoE target receives its bank despite an intervening re-bank");
+            context.Expect(last && uint64(last->amount) == _lastBatchBank,
+                "last surviving AoE target receives the independently re-earned bank");
+            Finish(context);
+            return;
+        }
         if (_stage != Stage::AwaitExpiry)
         {
             ObjectGuid expectedTarget = ExpectedTarget();
@@ -217,6 +231,7 @@ public:
             case Stage::AwaitGreyKill:
                 CheckGreyKill(context, actor);
                 break;
+            case Stage::AwaitBatch:
             case Stage::Done:
                 break;
         }
@@ -236,6 +251,7 @@ private:
         AwaitRebank,
         AwaitExpiry,
         AwaitGreyKill,
+        AwaitBatch,
         Done
     };
 
@@ -260,6 +276,7 @@ private:
             case Stage::AwaitSpend: return _spendGuid;
             case Stage::AwaitRebank: return _expiryGuid;
             case Stage::AwaitGreyKill: return _greyGuid;
+            case Stage::AwaitBatch:
             case Stage::AwaitExpiry:
             case Stage::Done:
                 return ObjectGuid::Empty;
@@ -359,7 +376,7 @@ private:
                 + ",direct=" + std::to_string(directDamage)
                 + ",bank=" + std::to_string(_expectedBank));
         context.Expect(runtime.overkill.bank == 0 && runtime.overkill.expiresMs == 0
-                && runtime.overkill.pendingDamage == 0
+                && runtime.overkill.pending.empty()
                 && context.FindEvent(TestHarness::EventType::DamageFinal, actor->GetGUID(),
                     _spendGuid, SPELL_OVERKILL_DAMAGE),
             "spending the bank resolves the tagged Overkill damage event");
@@ -427,7 +444,40 @@ private:
         Runtime& runtime = GetRuntime(actor);
         context.Expect(runtime.overkill.bank == 0 && runtime.overkill.expiresMs == 0,
             "grey-mob killing blow banks no excess damage");
-        Finish(context);
+        Creature* first = RequireTarget(context, _baselineGuid, "first batch target remains available");
+        Creature* last = RequireTarget(context, _spendGuid, "last batch target remains available");
+        Creature* seed = context.SpawnDummy(3.0f, -0.2f);
+        Creature* middle = context.SpawnDummy(3.0f, 0.2f);
+        if (!first || !last || !seed || !middle)
+        {
+            context.Fail("batch damage targets available");
+            Finish(context);
+            return;
+        }
+        seed->SetHealth(1);
+        middle->SetHealth(2);
+        context.Engage(seed->GetGUID());
+        context.Engage(middle->GetGUID());
+        context.Engage(first->GetGUID());
+        context.Engage(last->GetGUID());
+        context.ClearEvents();
+
+        // Native AoE resolves each victim through DealDamage without a player
+        // update between them. Exercise that exact boundary deterministically.
+        auto hit = [&](Unit* target)
+        {
+            Unit::DealDamage(actor, target, TEST_DAMAGE, nullptr, SPELL_DIRECT_DAMAGE,
+                SPELL_SCHOOL_MASK_FIRE, sSpellMgr->GetSpellInfo(SPELL_TEST_DAMAGE), false);
+        };
+        hit(seed);
+        _firstBatchBank = runtime.overkill.bank;
+        hit(first);  // A survives and spends the seed bank.
+        hit(middle); // B dies and earns a new bank before either discharge runs.
+        _lastBatchBank = runtime.overkill.bank;
+        hit(last);   // C survives and spends the new bank.
+        context.Expect(_firstBatchBank > 0 && _lastBatchBank > 0 && !middle->IsAlive(),
+            "one native damage batch earns, spends, re-earns, and spends before update");
+        SetStage(Stage::AwaitBatch);
     }
 
     void Finish(TestHarness::Context& context, bool finish = true)
@@ -457,6 +507,8 @@ private:
     uint32 _baseDamage = 0;
     uint32 _killHealth = 0;
     uint64 _expectedBank = 0;
+    uint64 _firstBatchBank = 0;
+    uint64 _lastBatchBank = 0;
     ObjectGuid _baselineGuid;
     ObjectGuid _killGuid;
     ObjectGuid _spendGuid;

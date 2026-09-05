@@ -9,6 +9,7 @@
 #include "Log.h"
 #include "ItemTemplate.h"
 #include "Player.h"
+#include "ScriptMgr.h"
 #include "Spell.h"
 #include "SpellInfo.h"
 #include "SpellMgr.h"
@@ -79,6 +80,19 @@ void ForEachActive(Runtime& runtime, Fn&& fn)
         if (runtime.mask & (1u << index))
             fn(*Scripts()[index]);
 }
+
+class FabledMovementScript final : public PlayerScript
+{
+public:
+    FabledMovementScript() : PlayerScript("tertiary_fabled_movement", { PLAYERHOOK_ON_AFTER_MOVE }) { }
+
+    void OnPlayerAfterMove(Player* player, uint32 opcode) override
+    {
+        Runtime* runtime = _ready ? FindRuntime(player) : nullptr;
+        if (runtime && runtime->mask)
+            ForEachActive(*runtime, [&](Script& script) { script.OnAfterMove(player, *runtime, opcode); });
+    }
+};
 
 void AdvanceDeadline(uint64& deadline, uint64 ms)
 {
@@ -316,6 +330,7 @@ void RegisterScripts()
             std::abort();
         }
     }
+    new FabledMovementScript();
 }
 
 void RegisterTests()

@@ -229,6 +229,7 @@ enum PlayerHook
     PLAYERHOOK_ON_GET_REPUTATION_PRICE_DISCOUNT,
     PLAYERHOOK_ON_LEARN_TAXI_NODE,
     PLAYERHOOK_ON_BEFORE_GET_LEVEL_FOR_XP_GAIN,
+    PLAYERHOOK_ON_AFTER_MOVE,
     PLAYERHOOK_END
 };
 
@@ -238,6 +239,9 @@ protected:
     PlayerScript(char const* name, std::vector<uint16> enabledHooks = std::vector<uint16>());
 
 public:
+    // Called after validated client movement has relocated the player.
+    virtual void OnPlayerAfterMove(Player* /*player*/, uint32 /*opcode*/) { }
+
     // Called when a player dies
     virtual void OnPlayerJustDied(Player* /*player*/) { }
 

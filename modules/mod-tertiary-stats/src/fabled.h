@@ -207,14 +207,23 @@ struct Runtime : public DataMap::Base
         ObjectGuid currentTarget;
     } crossfire;
 
+    struct ImpactState
+    {
+        uint32 pendingFallDamage = 0;
+    } impact;
+
     struct OverkillState
     {
         uint64 bank = 0;
         uint64 expiresMs = 0;
         SpellSchoolMask schoolMask = SPELL_SCHOOL_MASK_NONE;
-        ObjectGuid pendingTarget;
-        uint64 pendingDamage = 0;
-        SpellSchoolMask pendingSchoolMask = SPELL_SCHOOL_MASK_NONE;
+        struct Discharge
+        {
+            ObjectGuid target;
+            uint64 damage;
+            SpellSchoolMask schoolMask;
+        };
+        std::vector<Discharge> pending;
     } overkill;
 
     // Test support: pull every pending deadline closer by ms. A deadline that
@@ -265,6 +274,7 @@ public:
 
     // Environmental damage (fall etc.); runs after Avoidance mitigation.
     virtual void OnEnvironmentalDamage(Player* /*player*/, Runtime& /*runtime*/, EnviromentalDamage /*type*/, uint32& /*damage*/) { }
+    virtual void OnAfterMove(Player* /*player*/, Runtime& /*runtime*/, uint32 /*opcode*/) { }
 
     // Non-triggered spell lifecycle for the player's own casts.
     virtual void OnSpellPrepare(Player* /*player*/, Runtime& /*runtime*/, Spell* /*spell*/) { }
