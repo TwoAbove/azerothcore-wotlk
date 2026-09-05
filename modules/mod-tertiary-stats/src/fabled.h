@@ -172,7 +172,6 @@ void ClearTestSettings(Player* player);
 struct KeeperAuraState
 {
     Aura* aura = nullptr;
-    int32 maxDuration = 0;
 };
 
 // Per-player fabled state. All *Ms fields are absolute GameTime milliseconds.

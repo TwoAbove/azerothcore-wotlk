@@ -90,9 +90,9 @@ public:
     {
         if (resetPeriodicTimer)
             SetPeriodicTimer(m_amplitude);
-        m_tickNumber = 0;
+        ResetTicks();
     }
-    void ResetTicks() { m_tickNumber = 0; }
+    void ResetTicks() { m_tickNumber = 0; m_durationPausedTicks = 0; }
 
     bool IsPeriodic() const { return m_isPeriodic; }
     void SetPeriodic(bool isPeriodic) { m_isPeriodic = isPeriodic; }
@@ -146,6 +146,8 @@ private:
     double m_periodicTimeRemainder;
     int32 m_amplitude;
     uint32 m_tickNumber;
+    // Paused-lifetime ticks advance callbacks but do not spend the finite lifetime's tick budget.
+    uint32 m_durationPausedTicks = 0;
 
     uint8 const m_effIndex;
     bool m_canBeRecalculated;

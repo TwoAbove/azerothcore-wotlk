@@ -132,6 +132,9 @@ public:
     int32 CalcMaxDuration(Unit* caster) const;
     int32 GetDuration() const { return m_duration; }
     void SetDuration(int32 duration, bool withMods = false);    /// @todo - Look to convert to std::chrono
+    // Pause only the lifetime countdown; effects and upkeep continue, and saved durations stay finite.
+    void SetDurationPaused(bool paused) { m_durationPaused = paused; }
+    bool IsDurationPaused() const { return m_durationPaused; }
     void RefreshDuration(bool withMods = false);
     void RefreshTimers(bool periodicReset = false);
     void RefreshTimersWithMods();
@@ -276,6 +279,7 @@ protected:
     bool m_isRemoved: 1;
     bool m_isSingleTarget: 1;                       // true if it's a single target spell and registered at caster - can change at spell steal for example
     bool m_isUsingCharges: 1;
+    bool m_durationPaused = false;
 
     TimePoint m_procCooldown;
 

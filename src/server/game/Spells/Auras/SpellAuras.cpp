@@ -747,9 +747,10 @@ void Aura::Update(uint32 diff, Unit* caster)
 {
     if (m_duration > 0)
     {
-        m_duration -= diff;
-        if (m_duration < 0)
-            m_duration = 0;
+        if (!IsDurationPaused())
+        {
+            m_duration = diff >= uint32(m_duration) ? 0 : m_duration - int32(diff);
+        }
 
         // handle ManaPerSecond/ManaPerSecondPerLevel
         if (m_timeCla)

@@ -654,6 +654,7 @@ void AuraEffect::CalculatePeriodic(Unit* caster, bool create, bool load)
         }
     }
 
+    m_durationPausedTicks = 0;
     if (load) // aura loaded from db
     {
         m_tickNumber = m_amplitude ? GetBase()->GetDuration() / m_amplitude : 0;
@@ -951,7 +952,8 @@ void AuraEffect::Update(uint32 diff, Unit* caster)
         uint32 tickBudget = MaxTicksPerUpdate;
         while (periodicTimer <= 0 && tickBudget > 0)
         {
-            if (!GetBase()->IsPermanent() && (m_tickNumber + 1) > totalTicks)
+            if (!GetBase()->IsPermanent() && !GetBase()->IsDurationPaused()
+                && (m_tickNumber - m_durationPausedTicks + 1) > totalTicks)
             {
                 periodicTimer = positiveAmplitude;
                 break;
@@ -959,6 +961,8 @@ void AuraEffect::Update(uint32 diff, Unit* caster)
 
             --tickBudget;
             ++m_tickNumber;
+            if (GetBase()->IsDurationPaused())
+                ++m_durationPausedTicks;
 
             // update before tick (aura can be removed in TriggerSpell or PeriodicTick calls)
             periodicTimer += positiveAmplitude;

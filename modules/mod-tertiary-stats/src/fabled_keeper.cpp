@@ -28,6 +28,7 @@ constexpr SpellGroup SPELL_GROUP_WELL_FED = static_cast<SpellGroup>(1001);
 constexpr int32 MIN_WELL_FED_DURATION_MS = 60000;
 constexpr uint32 TEST_ELIXIR_SPELL = 3593; // Elixir of Fortitude, guardian elixir group.
 constexpr uint32 TEST_EXTRA_SPELL = 1243;  // Power Word: Fortitude, normally not kept.
+constexpr uint32 TEST_PERIODIC_SPELL = 774; // Rejuvenation: finite periodic healing.
 
 std::unordered_set<uint32> ParseExtraSpells(std::string const& csv)
 {
@@ -123,9 +124,8 @@ void TrackAura(Player* player, Runtime& runtime, Aura* aura)
     auto managed = std::find_if(runtime.keeper.managed.begin(), runtime.keeper.managed.end(),
         [aura](KeeperAuraState const& state) { return state.aura == aura; });
     if (managed == runtime.keeper.managed.end())
-        runtime.keeper.managed.push_back({ aura, aura->GetMaxDuration() });
-    else
-        managed->maxDuration = aura->GetMaxDuration();
+        runtime.keeper.managed.push_back({ aura });
+    aura->SetDurationPaused(true);
 }
 
 void TrackAppliedAuras(Player* player, Runtime& runtime)
@@ -146,6 +146,13 @@ void ForgetAura(Runtime& runtime, Aura const* aura)
         [aura](KeeperAuraState const& state) { return state.aura == aura; });
 }
 
+void ReleaseAuras(Runtime& runtime)
+{
+    for (KeeperAuraState const& state : runtime.keeper.managed)
+        state.aura->SetDurationPaused(false);
+    runtime.keeper.managed.clear();
+}
+
 bool IsTracked(Runtime const& runtime, Aura const* aura)
 {
     return std::any_of(runtime.keeper.managed.begin(), runtime.keeper.managed.end(),
@@ -159,7 +166,7 @@ public:
 
     void OnRefresh(Player* player, Runtime& runtime, bool active) override
     {
-        runtime.keeper.managed.clear();
+        ReleaseAuras(runtime);
         if (active)
             TrackAppliedAuras(player, runtime);
     }
@@ -171,31 +178,14 @@ public:
 
     void OnAuraRemove(Player* /*player*/, Runtime& runtime, Aura* aura) override
     {
+        if (IsTracked(runtime, aura))
+            aura->SetDurationPaused(false);
         ForgetAura(runtime, aura);
-    }
-
-    void OnUpdate(Player* player, Runtime& runtime, uint32 diffMs, uint64 /*nowMs*/) override
-    {
-        if (!player || !player->IsAlive())
-        {
-            runtime.keeper.managed.clear();
-            return;
-        }
-
-        for (KeeperAuraState const& state : runtime.keeper.managed)
-        {
-            int32 duration = state.aura->GetDuration();
-            if (duration <= 0)
-                continue;
-
-            int64 compensated = int64(duration) + diffMs;
-            state.aura->SetDuration(int32(std::min<int64>(compensated, state.maxDuration)));
-        }
     }
 
     void OnDeath(Player* /*player*/, Runtime& runtime) override
     {
-        runtime.keeper.managed.clear();
+        ReleaseAuras(runtime);
     }
 
     void OnResurrect(Player* player, Runtime& runtime) override
@@ -254,20 +244,26 @@ public:
         context.Expect(IsTracked(runtime, elixir) && !IsTracked(runtime, ordinary),
             "aura apply hook tracks only Keeper-eligible buffs");
 
-        elixir->SetDuration(TEST_FROZEN_DURATION_MS - TEST_ELAPSED_MS);
-        ordinary->SetDuration(TEST_FROZEN_DURATION_MS - TEST_ELAPSED_MS);
-        HandleUpdate(actor, TEST_ELAPSED_MS);
-        context.Expect(elixir->GetDuration() == TEST_FROZEN_DURATION_MS
+        elixir->SetDuration(1);
+        ordinary->SetDuration(TEST_FROZEN_DURATION_MS);
+        actor->Unit::Update(TEST_ELAPSED_MS);
+        elixir = actor->GetAura(TEST_ELIXIR_SPELL);
+        ordinary = actor->GetAura(TEST_EXTRA_SPELL);
+        context.Expect(elixir && elixir->GetDuration() == 1
                 && elixir->GetMaxDuration() == elixirMaxDuration,
-            "elapsed compensation pauses a finite aura without making it permanent");
-        context.Expect(ordinary->GetDuration() == TEST_FROZEN_DURATION_MS - TEST_ELAPSED_MS
-                && ordinary->GetMaxDuration() == ordinaryMaxDuration,
-            "elapsed compensation leaves an ordinary aura unchanged");
-
-        elixir->SetDuration(elixirMaxDuration - 100);
-        HandleUpdate(actor, TEST_ELAPSED_MS);
+            "near-expiry Keeper aura survives a longer real unit update with finite duration");
+        context.Expect(ordinary
+                && ordinary->GetDuration() == TEST_FROZEN_DURATION_MS - TEST_ELAPSED_MS,
+            "ordinary aura counts down during the same real update");
+        if (!elixir || !ordinary)
+        {
+            Cleanup(context);
+            return;
+        }
+        elixir->RefreshDuration();
+        actor->Unit::Update(TEST_ELAPSED_MS);
         context.Expect(elixir->GetDuration() == elixirMaxDuration,
-            "elapsed compensation is capped at the original maximum");
+            "refreshing a paused aura preserves its paused countdown");
 
         TestSettings(actor).SetKeeperExtraSpells(" 1243 ");
         actor->RemoveAurasDueToSpell(TEST_EXTRA_SPELL);
@@ -302,6 +298,18 @@ public:
                 && replacement->GetDuration() == TEST_FROZEN_DURATION_MS
                 && replacement->GetMaxDuration() == ordinaryMaxDuration,
             "unequipping releases current finite auras without replacing or removing them");
+        replacement->SetDuration(1);
+        actor->Unit::Update(TEST_ELAPSED_MS);
+        context.Expect(!actor->HasAura(TEST_EXTRA_SPELL),
+            "released near-expiry aura expires on the next real unit update");
+        actor->CastSpell(actor, TEST_EXTRA_SPELL, true);
+        replacement = actor->GetAura(TEST_EXTRA_SPELL);
+        if (!replacement)
+        {
+            context.Expect(false, "control aura reapplied before re-equipping");
+            Cleanup(context);
+            return;
+        }
 
         item = Test::EquipFabled(actor, Effect::Keeper);
         _equipped = item != nullptr;
@@ -316,9 +324,7 @@ public:
         int32 elixirBeforeDeath = elixir->GetDuration();
         int32 replacementBeforeDeath = replacement->GetDuration();
         HandleDeath(actor);
-        elixir->SetDuration(elixirBeforeDeath - TEST_ELAPSED_MS);
-        replacement->SetDuration(replacementBeforeDeath - TEST_ELAPSED_MS);
-        HandleUpdate(actor, TEST_ELAPSED_MS);
+        actor->Unit::Update(TEST_ELAPSED_MS);
         context.Expect(runtime.keeper.managed.empty()
                 && elixir->GetDuration() == elixirBeforeDeath - TEST_ELAPSED_MS
                 && replacement->GetDuration() == replacementBeforeDeath - TEST_ELAPSED_MS,
@@ -328,10 +334,35 @@ public:
         context.Expect(IsTracked(runtime, elixir) && IsTracked(runtime, replacement),
             "resurrection re-enrolls surviving eligible auras without re-equipping");
         int32 elixirAfterResurrect = elixir->GetDuration();
-        elixir->SetDuration(elixirAfterResurrect - TEST_ELAPSED_MS);
-        HandleUpdate(actor, TEST_ELAPSED_MS);
+        actor->Unit::Update(TEST_ELAPSED_MS);
         context.Expect(elixir->GetDuration() == elixirAfterResurrect,
             "a surviving eligible aura pauses again after resurrection");
+
+        TestSettings(actor).SetKeeperExtraSpells("1243,774");
+        actor->RemoveAurasDueToSpell(TEST_PERIODIC_SPELL);
+        actor->CastSpell(actor, TEST_PERIODIC_SPELL, true);
+        Aura* periodic = actor->GetAura(TEST_PERIODIC_SPELL);
+        context.Expect(periodic != nullptr, "finite periodic control aura applied");
+        if (periodic)
+        {
+            int32 periodicDuration = periodic->GetDuration();
+            // Advance beyond the complete original lifetime, then observe another real heal.
+            actor->Unit::Update(uint32(periodicDuration));
+            actor->SetHealth(1);
+            actor->Unit::Update(3000);
+            context.Expect(actor->GetHealth() > 1
+                    && actor->HasAura(TEST_PERIODIC_SPELL),
+                "paused aura keeps healing beyond its original finite tick budget");
+            Test::UnequipFabled(actor, Effect::Keeper);
+            _equipped = false;
+            actor->SetHealth(1);
+            actor->Unit::Update(3000);
+            context.Expect(actor->GetHealth() > 1,
+                "resumed aura still heals after paused ticks exceeded its original budget");
+            actor->Unit::Update(uint32(periodicDuration));
+            context.Expect(!actor->HasAura(TEST_PERIODIC_SPELL),
+                "periodic aura expires normally after its duration is resumed");
+        }
 
         Cleanup(context);
     }
@@ -355,6 +386,8 @@ private:
                 Test::UnequipFabled(actor, Effect::Keeper);
             actor->RemoveAurasDueToSpell(TEST_ELIXIR_SPELL);
             actor->RemoveAurasDueToSpell(TEST_EXTRA_SPELL);
+            actor->RemoveAurasDueToSpell(TEST_PERIODIC_SPELL);
+            actor->SetFullHealth();
         }
 
         if (_settingsSaved)
