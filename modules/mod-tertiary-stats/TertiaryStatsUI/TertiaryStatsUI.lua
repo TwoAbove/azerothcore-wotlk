@@ -213,8 +213,23 @@ end
 
 local function ComparisonDefinition(definition, slot, candidate)
     local activeFabled = attunedBySlot[slot]
-    if candidate and definition and definition.fabled then
-        activeFabled = definition.fabled
+    local memory = candidate and definition and definition.fabled
+    if memory and not unlockedFabled[memory] then
+        local alreadyAttuned = false
+        for _, effect in pairs(attunedBySlot) do
+            if effect == memory then
+                alreadyAttuned = true
+                break
+            end
+        end
+        if not alreadyAttuned then
+            for _, compatibleSlot in ipairs(FABLED_COMPATIBLE_SLOTS[memory]) do
+                if slot == compatibleSlot then
+                    activeFabled = memory
+                    break
+                end
+            end
+        end
     end
     return {
         fabled = activeFabled,
