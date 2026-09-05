@@ -2,7 +2,7 @@
 ## Title: Tertiary Stats
 ## Notes: Tertiary item details, rerolls, and persistent Fabled attunements.
 ## Author: Twoabove
-## Version: 3.0.0
+## Version: 4.0.0
 
 libs\LibStub\LibStub.lua
 libs\LibQTip-1.0\LibQTip-1.0.lua

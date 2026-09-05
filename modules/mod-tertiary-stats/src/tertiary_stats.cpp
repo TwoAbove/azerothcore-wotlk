@@ -63,7 +63,7 @@
 namespace
 {
 std::string const STATE_KEY = "mod-tertiary-stats";
-constexpr std::string_view TERTIARY_PROTOCOL_VERSION = "V2";
+constexpr std::string_view TERTIARY_PROTOCOL_VERSION = "V3";
 std::atomic<uint32> _tertiaryProtocolGeneration{ 0 };
 constexpr uint8 MAX_POWERS_PER_ITEM = 3;
 constexpr uint8 BONUS_MASK_BITS = 7;
@@ -1018,7 +1018,8 @@ std::string MoneyText(uint32 copper)
     return Acore::StringFormat("{}g {}s {}c", gold, silver, remainder);
 }
 
-bool RerollTertiary(Player* player, Item* item, std::string& message)
+bool RerollTertiary(Player* player, Item* item, uint32 expectedGuid, uint32 quotedCost,
+    std::string& message)
 {
     if (!_settings.rerollEnabled)
         message = "Tertiary rerolling is currently disabled.";
@@ -1029,6 +1030,7 @@ bool RerollTertiary(Player* player, Item* item, std::string& message)
     else if (player->GetTradeData())
         message = "You cannot reroll an item while trading.";
     else if (!item || item->GetOwnerGUID() != player->GetGUID()
+        || item->GetGUID().GetCounter() != expectedGuid
         || item->GetCount() != 1 || item->IsInTrade())
         message = "That item is no longer available.";
     else if (!IsEligibleEquipment(item->GetTemplate()))
@@ -1043,6 +1045,11 @@ bool RerollTertiary(Player* player, Item* item, std::string& message)
         }
 
         uint32 cost = TertiaryRerollCost(item->GetTemplate());
+        if (cost != quotedCost)
+        {
+            message = "The reroll price has changed. Please confirm the new price.";
+            return false;
+        }
         if (!player->HasEnoughMoney(cost))
         {
             message = "You do not have enough money for this reroll.";
@@ -1058,7 +1065,8 @@ bool RerollTertiary(Player* player, Item* item, std::string& message)
         }
 
         uint16 bonusId = EncodeBonusId(mask, definition.pointsPerPower);
-        uint32 seed = (item->GetBonusSeed() & ~ITEM_BONUS_ID_MASK) | bonusId;
+        uint32 seed = (item->GetBonusSeed() & ~ITEM_BONUS_ID_MASK)
+            | bonusId | ITEM_BONUS_REROLLED;
         CharacterDatabaseTransaction transaction = CharacterDatabase.BeginTransaction();
         item->SetBonusSeed(seed);
         item->SetBinding(true);
@@ -1089,9 +1097,9 @@ void SendTertiaryInventorySnapshot(Player* player)
         Item const* item = player->GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
         std::string definition = TertiaryDefinitionWirePayloadOf(item, player);
         if (!definition.empty())
-            SendTertiarySnapshotMessage(player, Acore::StringFormat("I:E:{}:{}:{}:{}",
+            SendTertiarySnapshotMessage(player, Acore::StringFormat("I:E:{}:{}:{}:{}:{}",
                 generation, uint32(slot - EQUIPMENT_SLOT_START + 1),
-                TertiaryRerollCost(item->GetTemplate()), definition));
+                item->GetGUID().GetCounter(), TertiaryRerollCost(item->GetTemplate()), definition));
     }
 
     for (uint8 slot = INVENTORY_SLOT_ITEM_START; slot < INVENTORY_SLOT_ITEM_END; ++slot)
@@ -1099,9 +1107,9 @@ void SendTertiaryInventorySnapshot(Player* player)
         Item const* item = player->GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
         std::string definition = TertiaryDefinitionWirePayloadOf(item, player);
         if (!definition.empty())
-            SendTertiarySnapshotMessage(player, Acore::StringFormat("I:B:{}:0:{}:{}:{}",
+            SendTertiarySnapshotMessage(player, Acore::StringFormat("I:B:{}:0:{}:{}:{}:{}",
                 generation, uint32(slot - INVENTORY_SLOT_ITEM_START + 1),
-                TertiaryRerollCost(item->GetTemplate()), definition));
+                item->GetGUID().GetCounter(), TertiaryRerollCost(item->GetTemplate()), definition));
     }
 
     for (uint8 bagSlot = INVENTORY_SLOT_BAG_START; bagSlot < INVENTORY_SLOT_BAG_END; ++bagSlot)
@@ -1117,8 +1125,8 @@ void SendTertiaryInventorySnapshot(Player* player)
             std::string definition = TertiaryDefinitionWirePayloadOf(item, player);
             if (!definition.empty())
                 SendTertiarySnapshotMessage(player, Acore::StringFormat(
-                    "I:B:{}:{}:{}:{}:{}", generation, clientBag, slot + 1,
-                    TertiaryRerollCost(item->GetTemplate()), definition));
+                    "I:B:{}:{}:{}:{}:{}:{}", generation, clientBag, slot + 1,
+                    item->GetGUID().GetCounter(), TertiaryRerollCost(item->GetTemplate()), definition));
         }
     }
 
@@ -2078,6 +2086,20 @@ public:
     }
 };
 
+class TertiaryStatsMisc : public MiscScript
+{
+public:
+    TertiaryStatsMisc() : MiscScript("TertiaryStatsMisc",
+        { MISCHOOK_CAN_APPLY_SOULBOUND_FLAG }) { }
+
+    bool CanApplySoulboundFlag(Item* item, ItemTemplate const* /*itemTemplate*/) override
+    {
+        uint32 seed = item->GetBonusSeed();
+        return (seed >> ITEM_BONUS_SEED_VERSION_SHIFT) != ITEM_BONUS_SEED_VERSION
+            || !(seed & ITEM_BONUS_REROLLED);
+    }
+};
+
 class TertiaryStatsPlayer : public PlayerScript
 {
 public:
@@ -2158,13 +2180,13 @@ public:
             return true;
 
         std::string_view payload(message.data() + PREFIX.size(), message.size() - PREFIX.size());
-        if (payload == "V2:S")
+        if (payload == "V3:S")
             SendTertiarySnapshot(player);
-        else if (payload == "V2:I")
+        else if (payload == "V3:I")
             SendTertiaryInventorySnapshot(player);
-        else if (payload == "V2:M")
+        else if (payload == "V3:M")
             SendFabledAttunementSnapshot(player);
-        else if (payload.starts_with("V2:A:"))
+        else if (payload.starts_with("V3:A:"))
         {
             std::vector<std::string_view> tokens = Acore::Tokenize(payload, ':', false);
             std::string response = "Invalid Fabled attunement request.";
@@ -2189,29 +2211,35 @@ public:
                 SendTertiarySnapshot(player);
             }
         }
-        else if (payload.starts_with("V2:R:"))
+        else if (payload.starts_with("V3:R:"))
         {
             std::vector<std::string_view> tokens = Acore::Tokenize(payload, ':', false);
             Item* item = nullptr;
-            if (tokens.size() == 4 && tokens[2] == "E")
+            if (tokens.size() == 6 && tokens[2] == "E")
             {
                 if (Optional<uint32> slot = Acore::StringTo<uint32>(tokens[3]);
                     slot && *slot <= std::numeric_limits<uint8>::max())
                     item = FindClientItem(player, true, 0, uint8(*slot));
             }
-            else if (tokens.size() == 5 && tokens[2] == "B")
+            else if (tokens.size() == 7 && tokens[2] == "B")
             {
                 Optional<uint32> bag = Acore::StringTo<uint32>(tokens[3]);
                 Optional<uint32> slot = Acore::StringTo<uint32>(tokens[4]);
                 if (bag && *bag <= std::numeric_limits<uint8>::max()
                     && slot && *slot <= std::numeric_limits<uint8>::max())
-                {
                     item = FindClientItem(player, false, uint8(*bag), uint8(*slot));
-                }
             }
 
-            std::string response;
-            RerollTertiary(player, item, response);
+            std::string response = "Invalid tertiary reroll request.";
+            if (item)
+            {
+                Optional<uint32> expectedGuid = Acore::StringTo<uint32>(tokens[tokens.size() - 2]);
+                Optional<uint32> quotedCost = Acore::StringTo<uint32>(tokens.back());
+                if (expectedGuid && *expectedGuid && quotedCost
+                    && *quotedCost <= uint32(std::numeric_limits<int32>::max())
+                    && RerollTertiary(player, item, *expectedGuid, *quotedCost, response))
+                    SendTertiarySnapshot(player);
+            }
             ChatHandler(player->GetSession()).SendSysMessage(response);
         }
 
@@ -2886,7 +2914,23 @@ public:
         }
 
         std::string rerollMessage;
-        bool rerolled = rerollItem && RerollTertiary(actor, rerollItem, rerollMessage);
+        if (rerollItem)
+        {
+            uint32 seedBefore = rerollItem->GetBonusSeed();
+            uint32 moneyBefore = actor->GetMoney();
+            bool boundBefore = rerollItem->IsSoulBound();
+            bool wrongItemRejected = !RerollTertiary(actor, rerollItem, 0,
+                expectedRerollCost, rerollMessage);
+            bool staleQuoteRejected = !RerollTertiary(actor, rerollItem,
+                rerollGuid.GetCounter(), expectedRerollCost + 1, rerollMessage);
+            context.Expect(wrongItemRejected && staleQuoteRejected
+                    && rerollItem->GetBonusSeed() == seedBefore
+                    && actor->GetMoney() == moneyBefore
+                    && rerollItem->IsSoulBound() == boundBefore,
+                "stale reroll identity and quote leave the item and gold unchanged");
+        }
+        bool rerolled = rerollItem && RerollTertiary(actor, rerollItem,
+            rerollGuid.GetCounter(), expectedRerollCost, rerollMessage);
         Item* rerolledItem = actor->GetItemByGuid(rerollGuid);
         BonusDefinition rerolledDefinition;
         bool rerolledOrdinary = rerolledItem
@@ -2904,6 +2948,22 @@ public:
             rerollMessage);
         if (rerolledItem)
             actor->DestroyItem(rerolledItem->GetBagSlot(), rerolledItem->GetSlot(), true);
+        actor->SetMoney(savedMoney);
+        bool noBindAdded = actor->AddItem(4381, 1);
+        Item* noBindItem = noBindAdded ? actor->GetItemByEntry(4381) : nullptr;
+        context.Expect(noBindItem && noBindItem->GetTemplate()->Bonding == NO_BIND,
+            "unbound equipment is available for reroll persistence");
+        if (noBindItem)
+        {
+            _rerollNoBindGuid = noBindItem->GetGUID();
+            noBindItem->SetBonusSeed(MakeItemBonusSeed(originalBonusId));
+            uint32 cost = TertiaryRerollCost(noBindItem->GetTemplate());
+            actor->SetMoney(cost + 12345);
+            context.Expect(RerollTertiary(actor, noBindItem,
+                    _rerollNoBindGuid.GetCounter(), cost, rerollMessage)
+                    && noBindItem->IsSoulBound(),
+                "reroll binds otherwise unbound equipment", rerollMessage);
+        }
         actor->SetMoney(savedMoney);
 
 
@@ -3670,6 +3730,26 @@ public:
 
         if (rowFound && uint16(persistedSeed & ITEM_BONUS_ID_MASK) == _expectedBonusId)
         {
+            if (!_rerollNoBindGuid.IsEmpty())
+            {
+                QueryResult rerolled = CharacterDatabase.Query(
+                    "SELECT creatorGuid, giftCreatorGuid, count, duration, charges, flags, "
+                    "enchantments, randomPropertyId, durability, playedTime, text, bonusSeed "
+                    "FROM item_instance WHERE guid = {}", _rerollNoBindGuid.GetCounter());
+                if (!rerolled && _elapsed < 5000)
+                    return;
+                Item loaded;
+                Player* actor = context.GetActor();
+                context.Expect(rerolled && actor
+                        && loaded.LoadFromDB(_rerollNoBindGuid.GetCounter(), actor->GetGUID(),
+                            rerolled->Fetch(), 4381)
+                        && loaded.IsSoulBound(),
+                    "rerolled unbound equipment remains soulbound after database reload");
+                if (actor)
+                    if (Item* item = actor->GetItemByGuid(_rerollNoBindGuid))
+                        actor->DestroyItem(item->GetBagSlot(), item->GetSlot(), true);
+                _rerollNoBindGuid.Clear();
+            }
             context.Expect(true, "item atomically persists its bonus seed",
                 "seed=" + std::to_string(persistedSeed));
             context.Finish();
@@ -3836,6 +3916,7 @@ private:
     Stage _stage = Stage::Done;
     Item* _item = nullptr;
     ObjectGuid _itemGuid;
+    ObjectGuid _rerollNoBindGuid;
     ObjectGuid _dummyGuid;
     uint16 _pointBudget = 0;
     uint32 _elapsed = 0;
@@ -3883,6 +3964,7 @@ void AddSC_tertiary_stats()
     Fabled::RegisterBloodMagicSpellScripts();
     new TertiaryStatsWorld();
     new TertiaryStatsItem();
+    new TertiaryStatsMisc();
     new TertiaryStatsPlayer();
     new TertiaryStatsUnit();
     new TertiaryStatsSpell();

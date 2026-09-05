@@ -487,13 +487,6 @@ bool Item::LoadFromDB(ObjectGuid::LowType guid, ObjectGuid owner_guid, Field* fi
     }
 
     SetUInt32Value(ITEM_FIELD_FLAGS, fields[5].Get<uint32>());
-    // Remove bind flag for items vs NO_BIND set
-    if (IsSoulBound() && proto->Bonding == NO_BIND && sScriptMgr->CanApplySoulboundFlag(this, proto))
-    {
-        ApplyModFlag(ITEM_FIELD_FLAGS, ITEM_FIELD_FLAG_SOULBOUND, false);
-        need_save = true;
-    }
-
     std::string enchants = fields[6].Get<std::string>();
 
     if (!_LoadIntoDataField(fields[6].Get<std::string>(), ITEM_FIELD_ENCHANTMENT_1_1, MAX_ENCHANTMENT_SLOT * MAX_ENCHANTMENT_OFFSET))
@@ -526,6 +519,13 @@ bool Item::LoadFromDB(ObjectGuid::LowType guid, ObjectGuid owner_guid, Field* fi
         m_bonusSeed = DeriveItemBonusSeed(guid, entry);
         need_save = true;
     }
+    // Remove bind flag for items vs NO_BIND set
+    if (IsSoulBound() && proto->Bonding == NO_BIND && sScriptMgr->CanApplySoulboundFlag(this, proto))
+    {
+        ApplyModFlag(ITEM_FIELD_FLAGS, ITEM_FIELD_FLAG_SOULBOUND, false);
+        need_save = true;
+    }
+
 
     if (need_save)                                           // normal item changed state set not work at loading
     {

@@ -2,14 +2,15 @@
 #define MOD_TERTIARY_STATS_ITEM_BONUS_SEED_H
 
 #include "Define.h"
-// [31:24] version, [23:20] Fabled effect, [18:16] heirloom profile,
-// [15:0] ordinary bonus. Bit 19 remains reserved.
+// [31:24] version, [23:20] Fabled effect, [19] rerolled,
+// [18:16] heirloom profile, [15:0] ordinary bonus.
 
 constexpr uint32 ITEM_BONUS_SEED_VERSION = 1;
 constexpr uint32 ITEM_BONUS_SEED_VERSION_SHIFT = 24;
 constexpr uint32 ITEM_BONUS_ID_MASK = 0xFFFF;
 constexpr uint32 ITEM_BONUS_HEIRLOOM_PROFILE_SHIFT = 16;
 constexpr uint32 ITEM_BONUS_HEIRLOOM_PROFILE_MASK = 0x7;
+constexpr uint32 ITEM_BONUS_REROLLED = 1u << 19;
 constexpr uint32 ITEM_BONUS_FABLED_EFFECT_SHIFT = 20;
 constexpr uint32 ITEM_BONUS_FABLED_EFFECT_MASK = 0xF;
 

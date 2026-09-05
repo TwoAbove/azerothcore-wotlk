@@ -1,5 +1,5 @@
 local ADDON_PREFIX = "TStats"
-local PROTOCOL_VERSION = "V2"
+local PROTOCOL_VERSION = "V3"
 local floor = math.floor
 local QTip = LibStub("LibQTip-1.0")
 
@@ -853,11 +853,13 @@ UpdateRerollButton = function()
     end
 end
 
-local function AddRerollMenuItem(menu, label, request, itemLink, cost)
-    if not itemLink or type(cost) ~= "number" then
+local function AddRerollMenuItem(menu, label, request, itemLink, definition)
+    local cost = definition.rerollCost
+    if not itemLink or type(cost) ~= "number" or not definition.guidLow then
         return
     end
-    local selectedRequest = request
+    local selectedRequest = request .. ":" .. string.format("%.0f", definition.guidLow)
+        .. ":" .. string.format("%.0f", cost)
     local selectedLink = itemLink
     local selectedCost = cost
     menu[#menu + 1] = {
@@ -894,7 +896,7 @@ local function ShowRerollMenu()
                 EQUIPMENT_SLOT_LABELS[slot] or ("Slot " .. slot),
                 "E:" .. tostring(slot),
                 GetInventoryItemLink("player", slot),
-                definition.rerollCost)
+                definition)
         end
     end
     for bag = 0, 4 do
@@ -906,7 +908,7 @@ local function ShowRerollMenu()
                     "Bag " .. tostring(bag) .. ", slot " .. tostring(slot),
                     "B:" .. tostring(bag) .. ":" .. tostring(slot),
                     GetContainerItemLink(bag, slot),
-                    definition.rerollCost)
+                    definition)
             end
         end
     end
@@ -1163,6 +1165,10 @@ local function InstallCharacterPanel()
 end
 
 local function SplitProtocol(message)
+    if not message or message == "" or string.find(message, "::", 1, true)
+            or string.sub(message, 1, 1) == ":" or string.sub(message, -1) == ":" then
+        return {}
+    end
     local fields = {}
     for value in string.gmatch(message or "", "[^:]+") do
         fields[#fields + 1] = value
@@ -1171,6 +1177,9 @@ local function SplitProtocol(message)
 end
 
 local function ProtocolInteger(value, minimum, maximum)
+    if not value or not string.match(value, "^%d+$") then
+        return nil
+    end
     local number = tonumber(value)
     if not number or number ~= floor(number) or number < minimum or number > maximum then
         return nil
@@ -1293,6 +1302,9 @@ local function HandleProtocolMessage(message)
     if fields[2] == "I" then
         local action = fields[3]
         local generation = ProtocolInteger(fields[4], 1, 4294967295)
+        if not generation then
+            return
+        end
         if action == "C" and generation and #fields == 4 then
             if generation > inventoryGeneration then
                 inventoryGeneration = generation
@@ -1302,18 +1314,22 @@ local function HandleProtocolMessage(message)
             end
         elseif action == "E" and generation == inventoryFrameGeneration then
             local slot = ProtocolInteger(fields[5], 1, 19)
-            local cost = ProtocolInteger(fields[6], 0, 2147483647)
-            local definition = slot and cost and ParseItemDefinition(fields, 7)
+            local guidLow = ProtocolInteger(fields[6], 1, 4294967295)
+            local cost = ProtocolInteger(fields[7], 0, 2147483647)
+            local definition = slot and guidLow and cost and ParseItemDefinition(fields, 8)
             if definition then
+                definition.guidLow = guidLow
                 definition.rerollCost = cost
                 inventoryFrameEquippedDefinitions[slot] = definition
             end
         elseif action == "B" and generation == inventoryFrameGeneration then
             local bag = ProtocolInteger(fields[5], 0, 4)
             local slot = ProtocolInteger(fields[6], 1, 255)
-            local cost = ProtocolInteger(fields[7], 0, 2147483647)
-            local definition = bag and slot and cost and ParseItemDefinition(fields, 8)
+            local guidLow = ProtocolInteger(fields[7], 1, 4294967295)
+            local cost = ProtocolInteger(fields[8], 0, 2147483647)
+            local definition = bag and slot and guidLow and cost and ParseItemDefinition(fields, 9)
             if definition then
+                definition.guidLow = guidLow
                 definition.rerollCost = cost
                 inventoryFrameBagDefinitions[BagKey(bag, slot)] = definition
             end
