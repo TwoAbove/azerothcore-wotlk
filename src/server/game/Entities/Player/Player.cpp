@@ -4130,7 +4130,7 @@ void Player::DeleteFromDB(ObjectGuid::LowType lowGuid, uint32 accountId, bool up
                         do
                         {
                             Field* fields = resultItems->Fetch();
-                            uint32 mailId = fields[14].Get<uint32>();
+                            uint32 mailId = fields[15].Get<uint32>();
                             if (Item* mailItem = _LoadMailedItem(playerGuid, nullptr, mailId, nullptr, fields))
                             {
                                 itemsByMail[mailId].push_back(mailItem);

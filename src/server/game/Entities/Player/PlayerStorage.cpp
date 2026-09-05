@@ -6363,7 +6363,7 @@ void Player::_LoadMail(PreparedQueryResult mailsResult, PreparedQueryResult mail
         do
         {
             Field* fields = mailItemsResult->Fetch();
-            uint32 mailId = fields[14].Get<uint32>();
+            uint32 mailId = fields[15].Get<uint32>();
             _LoadMailedItem(GetGUID(), this, mailId, mailById[mailId], fields);
         } while (mailItemsResult->NextRow());
     }
