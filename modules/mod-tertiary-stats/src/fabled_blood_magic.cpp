@@ -302,6 +302,23 @@ public:
                     && actor->GetPower(POWER_MANA) == _cancelMana
                     && !actor->HasAura(SPELL_BLOOD_MAGIC_DEBT),
                 "an interrupted cast spends neither resources nor Blood Debt");
+            _stage = Stage::DrainedCast;
+            _waited = 0;
+            return;
+        }
+
+        if (_stage == Stage::DrainedCast && _waited >= 1700)
+        {
+            CheckChangedManaCast(context, false);
+            _stage = Stage::RegeneratedCast;
+            _waited = 0;
+            return;
+        }
+
+        if (_stage == Stage::RegeneratedCast && _waited >= 1700)
+        {
+            CheckChangedManaCast(context, true);
+            actor->RemoveAurasDueToSpell(SPELL_BLOOD_MAGIC_DEBT);
             _stage = Stage::LethalCast;
             _waited = 0;
             return;
@@ -348,6 +365,8 @@ private:
         FullResult,
         CancelledCast,
         CancelledResult,
+        DrainedCast,
+        RegeneratedCast,
         LethalCast,
         LethalResult,
         Done
@@ -358,6 +377,40 @@ private:
         Aura* aura = player ? player->GetAura(SPELL_BLOOD_MAGIC_DEBT) : nullptr;
         AuraEffect* effect = aura ? aura->GetEffect(EFFECT_0) : nullptr;
         return effect ? effect->GetAmount() : 0;
+    }
+
+    void CheckChangedManaCast(TestHarness::Context& context, bool regenerate)
+    {
+        Player* actor = context.GetActor();
+        Creature* dummy = context.GetCreature(_dummyGuid);
+        context.Expect(dummy != nullptr, "completed-cast target remains available");
+        if (!dummy)
+            return;
+
+        actor->RemoveAurasDueToSpell(SPELL_BLOOD_MAGIC_DEBT);
+        actor->SetFullHealth();
+        actor->SetPower(POWER_MANA, regenerate ? 0 : uint32(_frostboltManaCost));
+        context.ClearEvents();
+        SpellCastResult result = actor->CastSpell(dummy, SPELL_TEST_FROSTBOLT, false);
+        Spell* current = actor->GetCurrentSpell(CURRENT_GENERIC_SPELL);
+        bool started = result == SPELL_CAST_OK && current
+            && current->GetSpellInfo()->Id == SPELL_TEST_FROSTBOLT;
+        context.Expect(started, "mana-change regression starts a cast-time spell");
+        if (!started)
+            return;
+
+        // Change mana after prepare, then drive the normal cast-bar completion
+        // synchronously so natural regeneration and debt ticks cannot race assertions.
+        actor->SetPower(POWER_MANA, regenerate ? uint32(_frostboltManaCost) : 0);
+        current->update(10000);
+        context.Expect(context.FindEvent(TestHarness::EventType::Cast,
+                actor->GetGUID(), ObjectGuid::Empty, SPELL_TEST_FROSTBOLT) != nullptr,
+            regenerate ? "cast completes after mana regeneration" : "cast completes after mana drain");
+        context.Expect(actor->GetPower(POWER_MANA) == 0,
+            "completed cast spends the mana available at completion");
+        context.Expect(DebtAmount(actor) == (regenerate ? 0 : HealthCost(actor, _frostboltManaCost)),
+            regenerate ? "regenerated mana prevents stale Blood Debt"
+                       : "mana drained during casting becomes exact Blood Debt");
     }
 
     void Cleanup(TestHarness::Context& context)

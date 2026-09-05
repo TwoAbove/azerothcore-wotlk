@@ -466,6 +466,7 @@ public:
     void finish(bool ok = true);
     void TakePower();
     void CalculatePowerCost();
+    void ApplyPowerCostScripts();
     void TakeAmmo();
 
     void TakeRunePower(bool didHit);
@@ -489,6 +490,7 @@ public:
     SpellCastResult CheckRange(bool strict);
     SpellCastResult CheckPower();
     SpellCastResult CheckRuneCost(uint32 RuneCostID);
+    int32 CalculateRuneCost(uint32 baseCost);
     SpellCastResult CheckCasterAuras(bool preventionOnly) const;
 
     int32 CalculateSpellDamage(uint8 i, Unit const* target) const { return m_caster->CalculateSpellDamage(target, m_spellInfo, i, &m_spellValue->EffectBasePoints[i]); }

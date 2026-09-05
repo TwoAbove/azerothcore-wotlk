@@ -3857,6 +3857,10 @@ void Spell::_cast(bool skipCheck)
 
     CallScriptBeforeCastHandlers();
 
+    // Keep the native prepare-time snapshot, but let scripts resolve costs
+    // against current resources before the final power check and consumption.
+    ApplyPowerCostScripts();
+
     Player* modOwner = m_caster->GetSpellModOwner();
     // skip check if done already (for instant cast spells for example)
     if (!skipCheck)
@@ -5329,8 +5333,13 @@ void Spell::TakeCastItem()
 
 void Spell::CalculatePowerCost()
 {
-    m_powerCost = m_CastItem ? 0 : m_spellInfo->CalcPowerCost(m_caster, m_spellSchoolMask, this);
-    _powerCostBeforeScripts = m_powerCost;
+    _powerCostBeforeScripts = m_CastItem ? 0 : m_spellInfo->CalcPowerCost(m_caster, m_spellSchoolMask, this);
+    ApplyPowerCostScripts();
+}
+
+void Spell::ApplyPowerCostScripts()
+{
+    m_powerCost = _powerCostBeforeScripts;
     sScriptMgr->OnCalculatePowerCost(this, m_powerCost);
 }
 
@@ -5428,6 +5437,20 @@ void Spell::TakeAmmo()
     }
 }
 
+int32 Spell::CalculateRuneCost(uint32 baseCost)
+{
+    int32 cost = baseCost;
+    if (Player* modOwner = m_caster->GetSpellModOwner())
+        modOwner->ApplySpellMod(m_spellInfo->Id, SPELLMOD_COST, cost, this);
+
+    // Rune costs live in RuneCostID rather than ManaCost, but use the same
+    // school percentage modifier as other power costs.
+    SpellSchools school = GetFirstSchoolInMask(m_spellSchoolMask);
+    cost = int32(std::ceil(cost * (1.0f + m_caster->GetFloatValue(
+        static_cast<uint16>(UNIT_FIELD_POWER_COST_MULTIPLIER) + school))));
+    return std::max(cost, 0);
+}
+
 SpellCastResult Spell::CheckRuneCost(uint32 RuneCostID)
 {
     if (m_spellInfo->PowerType != POWER_RUNE || !RuneCostID)
@@ -5457,11 +5480,7 @@ SpellCastResult Spell::CheckRuneCost(uint32 RuneCostID)
     int32 runeCost[NUM_RUNE_TYPES];                         // blood, frost, unholy, death
 
     for (uint32 i = 0; i < RUNE_DEATH; ++i)
-    {
-        runeCost[i] = src->RuneCost[i];
-        if (Player* modOwner = m_caster->GetSpellModOwner())
-            modOwner->ApplySpellMod(m_spellInfo->Id, SPELLMOD_COST, runeCost[i], this);
-    }
+        runeCost[i] = CalculateRuneCost(src->RuneCost[i]);
 
     runeCost[RUNE_DEATH] = MAX_RUNES;                       // calculated later
 
@@ -5497,11 +5516,7 @@ void Spell::TakeRunePower(bool didHit)
     int32 runeCost[NUM_RUNE_TYPES];                         // blood, frost, unholy, death
 
     for (uint32 i = 0; i < RUNE_DEATH; ++i)
-    {
-        runeCost[i] = runeCostData->RuneCost[i];
-        if (Player* modOwner = m_caster->GetSpellModOwner())
-            modOwner->ApplySpellMod(m_spellInfo->Id, SPELLMOD_COST, runeCost[i], this);
-    }
+        runeCost[i] = CalculateRuneCost(runeCostData->RuneCost[i]);
 
     runeCost[RUNE_DEATH] = 0;                               // calculated later
 
