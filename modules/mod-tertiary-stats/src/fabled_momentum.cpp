@@ -90,7 +90,7 @@ public:
         }
 
         _baselineRunSpeed = _actor->GetSpeedRate(MOVE_RUN);
-        _equipped = Test::EquipFabled(_actor, Effect::Momentum) != nullptr;
+        _equipped = Test::EquipFabled(context, _actor, Effect::Momentum) != nullptr;
         context.Expect(_equipped, "Momentum fabled trinket equipped");
         if (!_equipped)
         {
@@ -229,7 +229,7 @@ private:
         }
         if (_actor && _equipped)
         {
-            Test::UnequipFabled(_actor, Effect::Momentum);
+            Test::UnequipFabled(context, _actor, Effect::Momentum);
             _equipped = false;
         }
         context.DespawnAllDummies();

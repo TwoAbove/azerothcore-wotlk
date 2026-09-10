@@ -2723,87 +2723,29 @@ class spell_tertiary_unbroken_daze final : public SpellScript
 
 };
 
-class TertiaryStatsTestSuite final : public TestHarness::Suite
+class TertiaryGenerationTestSuite final : public TestHarness::Suite
 {
 public:
     void Start(TestHarness::Context& context) override
     {
         Player* actor = context.GetActor();
-        context.Expect(actor != nullptr, "headless actor available");
-        context.Expect(_settings.enabled && _dbcReady,
-            "tertiary system enabled with custom spells");
-        context.Expect(ClampAuraDuration(std::numeric_limits<uint32>::max())
-                == uint32(std::numeric_limits<int32>::max()),
-            "aura durations clamp to the signed duration range");
-
-        Fabled::Settings fabledSettings = Fabled::GetSettings();
-        float savedQualityFabledChance = fabledSettings.chance;
-        std::array<float, 3> savedFabledMultipliers = fabledSettings.chanceMultipliers;
-        fabledSettings.chance = 3.0f;
-        fabledSettings.chanceMultipliers = { 1.0f, 2.0f, 4.0f };
-        bool qualityChancesMatch = _settings.rollChance == 70.0f
-            && FabledRollChance(ITEM_QUALITY_UNCOMMON, fabledSettings) == 3.0f
-            && FabledRollChance(ITEM_QUALITY_RARE, fabledSettings) == 6.0f
-            && FabledRollChance(ITEM_QUALITY_EPIC, fabledSettings) == 12.0f;
-        fabledSettings.chance = savedQualityFabledChance;
-        fabledSettings.chanceMultipliers = savedFabledMultipliers;
-        context.Expect(qualityChancesMatch,
-            "power slots cascade at seventy percent while quality scales Fabled provenance");
-        bool anchorMapMatches =
-            Fabled::AnchorFor(Fabled::Effect::Impact) == Fabled::Anchor::Feet
-            && Fabled::AnchorFor(Fabled::Effect::Premonition) == Fabled::Anchor::Trinket
-            && Fabled::AnchorFor(Fabled::Effect::Momentum) == Fabled::Anchor::Finger
-            && Fabled::AnchorFor(Fabled::Effect::Ghostwalk) == Fabled::Anchor::Back
-            && Fabled::AnchorFor(Fabled::Effect::Cavalier) == Fabled::Anchor::Legs
-            && Fabled::AnchorFor(Fabled::Effect::Keeper) == Fabled::Anchor::Chest
-            && Fabled::AnchorFor(Fabled::Effect::VengefulGhost) == Fabled::Anchor::Trinket
-            && Fabled::AnchorFor(Fabled::Effect::Crossfire) == Fabled::Anchor::Finger
-            && Fabled::AnchorFor(Fabled::Effect::AlchemistsGut) == Fabled::Anchor::Trinket
-            && Fabled::AnchorFor(Fabled::Effect::LeviathansGift) == Fabled::Anchor::Head
-            && Fabled::AnchorFor(Fabled::Effect::Overkill) == Fabled::Anchor::Weapon
-            && Fabled::AnchorFor(Fabled::Effect::BloodMagic) == Fabled::Anchor::Finger
-            && Fabled::AnchorFor(Fabled::Effect::Warcaster) == Fabled::Anchor::Finger
-            && Fabled::AnchorFor(Fabled::Effect::Indomitable) == Fabled::Anchor::Trinket;
-        context.Expect(anchorMapMatches,
-            "combat Fabled effects share ring and trinket anchors");
-
-        std::span<Fabled::Effect const> fingerPool =
-            Fabled::EffectPoolFor(Fabled::Anchor::Finger);
-        std::span<Fabled::Effect const> trinketPool =
-            Fabled::EffectPoolFor(Fabled::Anchor::Trinket);
-        bool poolsMatch = fingerPool.size() == 4
-            && fingerPool[0] == Fabled::Effect::Crossfire
-            && fingerPool[1] == Fabled::Effect::Momentum
-            && fingerPool[2] == Fabled::Effect::Warcaster
-            && fingerPool[3] == Fabled::Effect::BloodMagic
-            && trinketPool.size() == 4
-            && trinketPool[0] == Fabled::Effect::Premonition
-            && trinketPool[1] == Fabled::Effect::VengefulGhost
-            && trinketPool[2] == Fabled::Effect::AlchemistsGut
-            && trinketPool[3] == Fabled::Effect::Indomitable
-            && Fabled::EffectPoolFor(Fabled::Anchor::Shoulders).empty()
-            && Fabled::EffectPoolFor(Fabled::Anchor::Neck).empty()
-            && Fabled::EffectPoolFor(Fabled::Anchor::Wrists).empty()
-            && Fabled::EffectPoolFor(Fabled::Anchor::Hands).empty()
-            && Fabled::EffectPoolFor(Fabled::Anchor::Waist).empty();
-        context.Expect(poolsMatch,
-            "rings and trinkets expose four-effect pools while quiet slots expose none");
-
-        ItemTemplate const* boots = sObjectMgr->GetItemTemplate(16859);
-        ItemTemplate const* trinket = sObjectMgr->GetItemTemplate(90000);
-        ItemTemplate const* weapon = sObjectMgr->GetItemTemplate(TEST_SUFFIX_ITEM_ENTRY);
-        context.Expect(boots && trinket && weapon
-                && Fabled::EffectPoolFor(boots).size() == 1
-                && Fabled::EffectPoolFor(boots)[0] == Fabled::Effect::Impact
-                && Fabled::EffectPoolFor(trinket).size() == 4
-                && Fabled::EffectPoolFor(weapon).size() == 1
-                && Fabled::EffectPoolFor(weapon)[0] == Fabled::Effect::Overkill,
-            "item inventory types resolve to their assigned Fabled pools");
+        context.Expect(actor && _settings.enabled && _dbcReady,
+            "headless actor and enabled tertiary spells available");
         if (!actor || !_settings.enabled || !_dbcReady)
         {
             context.Finish();
             return;
         }
+        context.Expect(ClampAuraDuration(std::numeric_limits<uint32>::max())
+                == uint32(std::numeric_limits<int32>::max()),
+            "aura durations clamp to the signed duration range");
+        Fabled::Settings fabledSettings = Fabled::GetSettings();
+        fabledSettings.chance = 3.0f;
+        fabledSettings.chanceMultipliers = { 1.0f, 2.0f, 4.0f };
+        context.Expect(FabledRollChance(ITEM_QUALITY_UNCOMMON, fabledSettings) == 3.0f
+                && FabledRollChance(ITEM_QUALITY_RARE, fabledSettings) == 6.0f
+                && FabledRollChance(ITEM_QUALITY_EPIC, fabledSettings) == 12.0f,
+            "quality scales explicitly configured Fabled provenance chances");
         ItemTemplate const* heirloomTrinket = sObjectMgr->GetItemTemplate(90000);
         uint16 fixedFleetfoot = EncodeBonusId(PowerBit(Power::Fleetfoot), 100);
         uint32 profiledSeed = AddHeirloomProfile(
@@ -2851,6 +2793,7 @@ public:
 
         Settings deterministicRollSettings = _settings;
         deterministicRollSettings.rollChance = 100.0f;
+        deterministicRollSettings.ordinaryChance = 100.0f;
         Fabled::Settings deterministicFabledSettings = Fabled::GetSettings();
         deterministicFabledSettings.chance = 100.0f;
         deterministicFabledSettings.chanceMultipliers.fill(1.0f);
@@ -2898,75 +2841,290 @@ public:
             suffixItem->RemoveFromWorld();
             delete suffixItem;
         }
-        bool rerollItemAdded = actor->AddItem(12006, 1);
-        Item* rerollItem = rerollItemAdded ? actor->GetItemByEntry(12006) : nullptr;
-        ObjectGuid rerollGuid = rerollItem ? rerollItem->GetGUID() : ObjectGuid::Empty;
-        uint32 savedMoney = actor->GetMoney();
-        uint8 originalMask = PowerBit(Power::Avoidance) | PowerBit(Power::Fleetfoot);
-        uint16 originalBonusId = EncodeBonusId(originalMask, 100);
-        uint32 expectedRerollCost = rerollItem
-            ? TertiaryRerollCost(rerollItem->GetTemplate()) : 0;
-        if (rerollItem)
+        Settings disabledRollSettings = _settings;
+        disabledRollSettings.rollChance = 0.0f;
+        disabledRollSettings.ordinaryChance = 100.0f;
+        Item* noOrdinaryItem = nullptr;
         {
-            rerollItem->SetBonusSeed(MakeItemBonusSeed(
-                originalBonusId, 0, uint8(Fabled::Effect::Warcaster)));
-            actor->SetMoney(expectedRerollCost + 12345);
+            ScopedItemRollSettings scopedSettings(disabledRollSettings, suffixFabledSettings);
+            noOrdinaryItem = Item::CreateItem(14136, 1, actor);
         }
-
-        std::string rerollMessage;
-        if (rerollItem)
+        context.Expect(noOrdinaryItem && !TertiaryBonusOf(noOrdinaryItem),
+            "zero cascade chance produces no ordinary package");
+        if (noOrdinaryItem)
         {
-            uint32 seedBefore = rerollItem->GetBonusSeed();
-            uint32 moneyBefore = actor->GetMoney();
-            bool boundBefore = rerollItem->IsSoulBound();
-            bool wrongItemRejected = !RerollTertiary(actor, rerollItem, 0,
-                expectedRerollCost, rerollMessage);
-            bool staleQuoteRejected = !RerollTertiary(actor, rerollItem,
-                rerollGuid.GetCounter(), expectedRerollCost + 1, rerollMessage);
-            context.Expect(wrongItemRejected && staleQuoteRejected
-                    && rerollItem->GetBonusSeed() == seedBefore
-                    && actor->GetMoney() == moneyBefore
-                    && rerollItem->IsSoulBound() == boundBefore,
-                "stale reroll identity and quote leave the item and gold unchanged");
+            noOrdinaryItem->RemoveFromWorld();
+            delete noOrdinaryItem;
         }
-        bool rerolled = rerollItem && RerollTertiary(actor, rerollItem,
-            rerollGuid.GetCounter(), expectedRerollCost, rerollMessage);
-        Item* rerolledItem = actor->GetItemByGuid(rerollGuid);
-        BonusDefinition rerolledDefinition;
-        bool rerolledOrdinary = rerolledItem
-            && DecodeBonusId(TertiaryBonusOf(rerolledItem), rerolledDefinition);
-        context.Expect(rerolled && rerolledItem
-                && rerolledOrdinary
-                && rerolledDefinition.powerMask != originalMask
-                && PowerCount(rerolledDefinition.powerMask) == PowerCount(originalMask)
-                && rerolledDefinition.pointsPerPower == 100
-                && Fabled::EffectFromItemBonusSeed(rerolledItem->GetBonusSeed())
-                    == Fabled::Effect::Warcaster
-                && rerolledItem->IsSoulBound()
-                && actor->GetMoney() == 12345,
-            "reroll changes only the ordinary mask, preserves line count and Fabled provenance",
-            rerollMessage);
-        if (rerolledItem)
-            actor->DestroyItem(rerolledItem->GetBagSlot(), rerolledItem->GetSlot(), true);
-        actor->SetMoney(savedMoney);
-        bool noBindAdded = actor->AddItem(4381, 1);
-        Item* noBindItem = noBindAdded ? actor->GetItemByEntry(4381) : nullptr;
-        context.Expect(noBindItem && noBindItem->GetTemplate()->Bonding == NO_BIND,
-            "unbound equipment is available for reroll persistence");
-        if (noBindItem)
+        constexpr uint8 mask = PowerBit(Power::Avoidance) | PowerBit(Power::Fleetfoot)
+            | PowerBit(Power::Siphon);
+        uint16 bonusId = EncodeBonusId(mask, 100);
+        context.Expect(TertiaryDefinitionWirePayload(bonusId, Fabled::Effect::None)
+                    == Acore::StringFormat("D:100:{}:0", uint32(mask))
+                && TertiaryDefinitionWirePayload(bonusId, Fabled::Effect::Warcaster)
+                    == Acore::StringFormat("D:100:{}:13", uint32(mask))
+                && TertiaryDefinitionWirePayload(0, Fabled::Effect::Warcaster) == "D:0:0:13",
+            "item definitions serialize ordinary powers and Fabled provenance together");
+        context.Finish();
+    }
+
+    void Update(TestHarness::Context&, uint32) override { }
+};
+
+class TertiaryRerollTestSuite final : public TestHarness::Suite
+{
+public:
+    void Start(TestHarness::Context& context) override
+    {
+        Player* actor = context.GetActor();
+        context.Expect(actor && _settings.enabled && _dbcReady,
+            "headless actor and enabled tertiary spells available");
+        if (!actor || !_settings.enabled || !_dbcReady)
         {
-            _rerollNoBindGuid = noBindItem->GetGUID();
-            noBindItem->SetBonusSeed(MakeItemBonusSeed(originalBonusId));
-            uint32 cost = TertiaryRerollCost(noBindItem->GetTemplate());
-            actor->SetMoney(cost + 12345);
-            context.Expect(RerollTertiary(actor, noBindItem,
-                    _rerollNoBindGuid.GetCounter(), cost, rerollMessage)
-                    && noBindItem->IsSoulBound(),
-                "reroll binds otherwise unbound equipment", rerollMessage);
+            context.Finish();
+            return;
         }
-        actor->SetMoney(savedMoney);
+        context.Expect(_settings.rerollEnabled, "rerolling is enabled for the integration fixture");
+        _savedMoney = actor->GetMoney();
+        _moneySaved = true;
+        constexpr uint8 originalMask = PowerBit(Power::Avoidance) | PowerBit(Power::Fleetfoot);
+        uint32 seed = MakeItemBonusSeed(EncodeBonusId(originalMask, 100),
+            0, uint8(Fabled::Effect::Warcaster));
+        auto createItem = [&]() -> Item*
+        {
+            ItemPosCountVec destination;
+            if (actor->CanStoreNewItem(INVENTORY_SLOT_BAG_0, NULL_SLOT,
+                    destination, 4381, 1) != EQUIP_ERR_OK)
+                return nullptr;
+            return actor->StoreNewItem(destination, 4381, true, 0, false, seed);
+        };
+        Item* first = createItem();
+        Item* second = createItem();
+        context.Expect(first && second && first->GetGUID() != second->GetGUID()
+                && first->GetTemplate()->Bonding == NO_BIND
+                && !first->IsSoulBound() && !second->IsSoulBound(),
+            "two distinct unbound reroll items occupy real backpack slots");
+        if (!first || !second)
+        {
+            Cancel(context);
+            context.Finish();
+            return;
+        }
+        _itemGuid = second->GetGUID();
+        uint16 firstPosition = first->GetPos();
+        uint16 secondPosition = second->GetPos();
+        uint32 cost = TertiaryRerollCost(first->GetTemplate());
+        actor->SetMoney(cost + 12345);
+        uint32 moneyBefore = actor->GetMoney();
+        uint32 firstSeed = first->GetBonusSeed();
+        uint32 secondSeed = second->GetBonusSeed();
+        bool firstBound = first->IsSoulBound();
+        bool secondBound = second->IsSoulBound();
+        uint32 clientSlot = first->GetSlot() - INVENTORY_SLOT_ITEM_START + 1;
+        auto request = [&](ObjectGuid guid, uint32 quote)
+        {
+            return Acore::StringFormat("TStats\tV3:R:B:0:{}:{}:{}",
+                clientSlot, guid.GetCounter(), quote);
+        };
+        auto dispatch = [&](std::string message)
+        {
+            context.Expect(!sScriptMgr->OnPlayerCanUseChat(actor, CHAT_MSG_WHISPER,
+                    LANG_ADDON, message, actor), "registered handler consumes reroll request");
+        };
+        auto unchanged = [&]()
+        {
+            return first->GetBonusSeed() == firstSeed && second->GetBonusSeed() == secondSeed
+                && first->IsSoulBound() == firstBound && second->IsSoulBound() == secondBound
+                && actor->GetMoney() == moneyBefore;
+        };
+        dispatch(request(first->GetGUID(), cost + 1));
+        context.Expect(unchanged(), "stale quote changes neither item, binding, nor gold");
+        // Capture the confirmation before the real slot changes underneath it.
+        std::string confirmation = request(first->GetGUID(), cost);
+        actor->SwapItem(firstPosition, secondPosition);
+        bool swapped = actor->GetItemByPos(firstPosition) == second
+            && actor->GetItemByPos(secondPosition) == first;
+        context.Expect(swapped, "real inventory swap replaces the confirmed slot with another valid GUID");
+        if (!swapped)
+        {
+            Cancel(context);
+            context.Finish();
+            return;
+        }
+        dispatch(confirmation);
+        context.Expect(unchanged(),
+            "stale valid-GUID confirmation changes neither swapped item, binding, nor gold");
+        dispatch(request(second->GetGUID(), cost));
+        BonusDefinition definition;
+        context.Expect(DecodeBonusId(TertiaryBonusOf(second), definition)
+                && definition.powerMask != originalMask
+                && PowerCount(definition.powerMask) == PowerCount(originalMask)
+                && definition.pointsPerPower == 100
+                && Fabled::EffectFromItemBonusSeed(second->GetBonusSeed()) == Fabled::Effect::Warcaster
+                && second->IsSoulBound() && actor->GetMoney() == 12345
+                && first->GetBonusSeed() == firstSeed && first->IsSoulBound() == firstBound,
+            "fresh slot confirmation rerolls only its item, preserves package and provenance, charges and binds");
+        _expectedSeed = second->GetBonusSeed();
+        CharacterDatabaseTransaction transaction = CharacterDatabase.BeginTransaction();
+        actor->SaveInventoryAndGoldToDB(transaction);
+        CharacterDatabase.CommitTransaction(transaction);
+    }
 
+    void Update(TestHarness::Context& context, uint32 diff) override
+    {
+        _elapsed += diff;
+        _pollElapsed += diff;
+        if (_pollElapsed < 100)
+            return;
+        _pollElapsed = 0;
+        QueryResult row = CharacterDatabase.Query(
+            "SELECT creatorGuid, giftCreatorGuid, count, duration, charges, flags, "
+            "enchantments, randomPropertyId, durability, playedTime, text, bonusSeed "
+            "FROM item_instance WHERE guid = {}", _itemGuid.GetCounter());
+        if ((!row || row->Fetch()[11].Get<uint32>() != _expectedSeed) && _elapsed < 5000)
+            return;
+        Item loaded;
+        Player* actor = context.GetActor();
+        context.Expect(row && actor
+                && loaded.LoadFromDB(_itemGuid.GetCounter(), actor->GetGUID(), row->Fetch(), 4381)
+                && loaded.GetBonusSeed() == _expectedSeed && loaded.IsSoulBound(),
+            "rerolled seed and forced binding survive an actual database reload");
+        Cancel(context);
+        context.Finish();
+    }
 
+    void Cancel(TestHarness::Context& context) override
+    {
+        if (_moneySaved)
+            if (Player* actor = context.GetActor())
+                actor->SetMoney(_savedMoney);
+        _moneySaved = false;
+    }
+
+private:
+    ObjectGuid _itemGuid;
+    uint32 _savedMoney = 0;
+    uint32 _expectedSeed = 0;
+    uint32 _elapsed = 0;
+    uint32 _pollElapsed = 0;
+    bool _moneySaved = false;
+};
+
+class TertiaryAttunementTestSuite final : public TestHarness::Suite
+{
+public:
+    void Start(TestHarness::Context& context) override
+    {
+        Player* actor = context.GetActor();
+        context.Expect(actor && _settings.enabled && _dbcReady,
+            "headless actor and enabled tertiary spells available");
+        if (!actor || !_settings.enabled || !_dbcReady)
+        {
+            context.Finish();
+            return;
+        }
+        context.Expect(!Fabled::IsUnlocked(actor, Fabled::Effect::Keeper)
+                && !Fabled::IsUnlocked(actor, Fabled::Effect::Warcaster),
+            "attunement fixture begins with unlearned memories");
+        constexpr uint8 mask = PowerBit(Power::Avoidance) | PowerBit(Power::Fleetfoot)
+            | PowerBit(Power::Siphon);
+        uint16 bonusId = EncodeBonusId(mask, 100);
+        ItemPosCountVec destination;
+        if (actor->CanStoreNewItem(INVENTORY_SLOT_BAG_0, NULL_SLOT,
+                destination, 14136, 1) != EQUIP_ERR_OK)
+        {
+            context.Fail("attunement fixture has a free backpack slot");
+            return;
+        }
+        Item* item = actor->StoreNewItem(destination, 14136, true, 0, false,
+            MakeItemBonusSeed(bonusId, 0, uint8(Fabled::Effect::Keeper)));
+        context.Expect(item != nullptr, "memory item created in backpack before equip");
+        if (!item)
+        {
+            context.Finish();
+            return;
+        }
+        uint16 backpackPosition = item->GetPos();
+        uint16 chestPosition = uint16(INVENTORY_SLOT_BAG_0) << 8 | EQUIPMENT_SLOT_CHEST;
+        auto exactPoints = [&](uint8 expectedMask)
+        {
+            TertiaryState* state = FindState(actor);
+            if (!state)
+                return false;
+            for (uint8 index = 0; index < POWER_COUNT; ++index)
+                if (state->rawPoints[index] != ((expectedMask & (1u << index)) ? 100 : 0))
+                    return false;
+            return true;
+        };
+        auto clear = [&]()
+        {
+            std::string request = Acore::StringFormat("TStats\tV3:A:0:{}",
+                uint32(EQUIPMENT_SLOT_CHEST) + 1);
+            context.Expect(!sScriptMgr->OnPlayerCanUseChat(actor, CHAT_MSG_WHISPER,
+                    LANG_ADDON, request, actor), "registered handler consumes attunement request");
+            sScriptMgr->OnPlayerUpdate(actor, 0);
+        };
+        actor->SwapItem(backpackPosition, chestPosition);
+        sScriptMgr->OnPlayerUpdate(actor, 0);
+        context.Expect(actor->GetItemByPos(chestPosition) == item
+                && Fabled::IsUnlocked(actor, Fabled::Effect::Keeper)
+                && Fabled::AttunedEffect(actor, EQUIPMENT_SLOT_CHEST) == Fabled::Effect::Keeper
+                && Fabled::Has(Fabled::GetRuntime(actor), Fabled::Effect::Keeper)
+                && exactPoints(0) && TertiaryBonusOf(item) == bonusId
+                && Fabled::EffectFromItemBonusSeed(item->GetBonusSeed()) == Fabled::Effect::Keeper,
+            "normal equip teaches and activates Keeper while suppressing only its ordinary slot");
+        Creature* dummy = context.SpawnDummy();
+        context.Expect(dummy && context.Engage(dummy->GetGUID()),
+            "attunement fixture enters combat");
+        clear();
+        context.Expect(actor->IsInCombat()
+                && Fabled::AttunedEffect(actor, EQUIPMENT_SLOT_CHEST) == Fabled::Effect::Keeper
+                && Fabled::Has(Fabled::GetRuntime(actor), Fabled::Effect::Keeper) && exactPoints(0),
+            "addon clear request in combat preserves active attunement and slot suppression");
+        actor->CombatStop(true);
+        context.DespawnAllDummies();
+        clear();
+        context.Expect(Fabled::AttunedEffect(actor, EQUIPMENT_SLOT_CHEST) == Fabled::Effect::None
+                && !Fabled::Has(Fabled::GetRuntime(actor), Fabled::Effect::Keeper)
+                && exactPoints(mask),
+            "addon clear and update remove Keeper and restore the exact ordinary package");
+        actor->SwapItem(chestPosition, backpackPosition);
+        actor->SwapItem(backpackPosition, chestPosition);
+        sScriptMgr->OnPlayerUpdate(actor, 0);
+        context.Expect(actor->GetItemByPos(chestPosition) == item
+                && Fabled::IsUnlocked(actor, Fabled::Effect::Keeper)
+                && Fabled::AttunedEffect(actor, EQUIPMENT_SLOT_CHEST) == Fabled::Effect::None
+                && !Fabled::Has(Fabled::GetRuntime(actor), Fabled::Effect::Keeper) && exactPoints(mask),
+            "re-equipping a learned memory preserves the player's cleared choice");
+        actor->SwapItem(chestPosition, backpackPosition);
+        item->SetBonusSeed(MakeItemBonusSeed(bonusId, 0, uint8(Fabled::Effect::Warcaster)));
+        actor->SwapItem(backpackPosition, chestPosition);
+        sScriptMgr->OnPlayerUpdate(actor, 0);
+        context.Expect(actor->GetItemByPos(chestPosition) == item
+                && Fabled::IsUnlocked(actor, Fabled::Effect::Warcaster)
+                && Fabled::AttunedEffect(actor, EQUIPMENT_SLOT_CHEST) == Fabled::Effect::None
+                && !Fabled::Has(Fabled::GetRuntime(actor), Fabled::Effect::Warcaster)
+                && exactPoints(mask),
+            "normal equip learns incompatible legacy provenance without activating an invalid slot");
+        context.Finish();
+    }
+
+    void Update(TestHarness::Context&, uint32) override { }
+};
+
+class TertiaryCombatTestSuite final : public TestHarness::Suite
+{
+public:
+    void Start(TestHarness::Context& context) override
+    {
+        Player* actor = context.GetActor();
+        context.Expect(actor && _settings.enabled && _dbcReady,
+            "headless actor and enabled tertiary spells available");
+        if (!actor || !_settings.enabled || !_dbcReady)
+        {
+            context.Finish();
+            return;
+        }
         TertiaryState* echoState = GetState(actor);
         Creature* deadEchoAnchor = context.SpawnDummy(3.0f, -0.6f);
         Creature* liveEchoFallback = context.SpawnDummy(3.0f, 0.6f);
@@ -3034,7 +3192,6 @@ public:
             return;
         }
 
-        _itemGuid = _item->GetGUID();
         _pointBudget = ItemPointBudget(_item->GetTemplate());
         context.Expect(_pointBudget > 0, "native item point budget resolved",
             "points=" + std::to_string(_pointBudget));
@@ -3043,8 +3200,6 @@ public:
             context.Finish();
             return;
         }
-        _nativeProperty = _item->GetItemRandomPropertyId();
-        _nativeSuffixFactor = _item->GetItemSuffixFactor();
 
         uint16 generatedBonusId = TertiaryBonusOf(_item);
         BonusDefinition generatedDefinition;
@@ -3054,106 +3209,12 @@ public:
                 && generatedDefinition.pointsPerPower == _pointBudget,
             "generated item deterministically decodes its three-power bonus",
             "bonusId=" + std::to_string(generatedBonusId));
-        context.Expect(TertiaryDefinitionWirePayload(
-                    generatedBonusId, Fabled::Effect::None)
-                == Acore::StringFormat("D:{}:{}:0", _pointBudget, uint32(ORDINARY_MASK))
-                && TertiaryDefinitionWirePayload(
-                    generatedBonusId, Fabled::Effect::Warcaster)
-                    == Acore::StringFormat(
-                        "D:{}:{}:13", _pointBudget, uint32(ORDINARY_MASK))
-                && TertiaryDefinitionWirePayload(0, Fabled::Effect::Warcaster)
-                    == "D:0:0:13",
-            "item definitions serialize ordinary powers and Fabled provenance together");
-        uint32 bonusSeed = _item->GetBonusSeed();
-        context.Expect((bonusSeed >> ITEM_BONUS_SEED_VERSION_SHIFT) == ITEM_BONUS_SEED_VERSION
-                && TertiaryBonusOf(_item) == generatedBonusId,
-            "item bonus seed reproduces the generated bonus");
-        context.Expect(_item->GetItemRandomPropertyId() == _nativeProperty
-                && _item->GetItemSuffixFactor() == _nativeSuffixFactor,
-            "tertiary assignment preserves the native random affix");
-
         TertiaryState* state = RefreshForMask(actor, ORDINARY_MASK);
         context.Expect(HasExactPoints(*state, ORDINARY_MASK), "ordinary points aggregate from equipped item");
         context.Expect(actor->HasAura(SPELL_AVOIDANCE_PASSIVE)
                 && actor->HasAura(SPELL_FLEETFOOT_GROUND_PASSIVE)
                 && actor->HasAura(SPELL_FLEETFOOT_FLIGHT_PASSIVE),
             "avoidance and fleetfoot passives active");
-
-        _item->SetBonusSeed(MakeItemBonusSeed(
-            generatedBonusId, 0, uint8(Fabled::Effect::Keeper)));
-        std::string attunementMessage;
-        bool learnedKeeper = Fabled::LearnFromEquippedItem(
-            actor, _item, EQUIPMENT_SLOT_CHEST, attunementMessage);
-        state->needsRefresh = true;
-        state = EnsureState(actor);
-        context.Expect(learnedKeeper
-                && Fabled::IsUnlocked(actor, Fabled::Effect::Keeper)
-                && Fabled::AttunedEffect(actor, EQUIPMENT_SLOT_CHEST)
-                    == Fabled::Effect::Keeper
-                && Fabled::Has(Fabled::GetRuntime(actor), Fabled::Effect::Keeper)
-                && HasExactPoints(*state, 0)
-                && TertiaryBonusOf(_item) == generatedBonusId
-                && Fabled::EffectFromItemBonusSeed(_item->GetBonusSeed())
-                    == Fabled::Effect::Keeper,
-            "equipping teaches and attunes a persistent Fabled memory while suppressing its slot",
-            attunementMessage);
-
-        std::string combatClearMessage;
-        bool clearedInCombat = Fabled::ClearAttunement(
-            actor, EQUIPMENT_SLOT_CHEST, combatClearMessage);
-        context.Expect(!clearedInCombat
-                && Fabled::AttunedEffect(actor, EQUIPMENT_SLOT_CHEST)
-                    == Fabled::Effect::Keeper,
-            "combat blocks Fabled attunement changes",
-            combatClearMessage);
-        actor->CombatStop(true);
-        dummy->CombatStop(true);
-        context.Expect(!actor->IsInCombat(),
-            "Fabled attunement changes resume out of combat");
-
-        std::string clearMessage;
-        bool clearedKeeper = Fabled::ClearAttunement(
-            actor, EQUIPMENT_SLOT_CHEST, clearMessage);
-        std::string relearnMessage;
-        bool relearnedKeeper = Fabled::LearnFromEquippedItem(
-            actor, _item, EQUIPMENT_SLOT_CHEST, relearnMessage);
-        state->needsRefresh = true;
-        state = EnsureState(actor);
-        context.Expect(!relearnedKeeper && relearnMessage.empty()
-                && Fabled::AttunedEffect(actor, EQUIPMENT_SLOT_CHEST)
-                    == Fabled::Effect::None
-                && HasExactPoints(*state, ORDINARY_MASK),
-            "equipping an already learned memory preserves the chosen cleared state");
-
-        _item->SetBonusSeed(MakeItemBonusSeed(
-            generatedBonusId, 0, uint8(Fabled::Effect::Warcaster)));
-        std::string legacyMemoryMessage;
-        bool learnedLegacyMemory = Fabled::LearnFromEquippedItem(
-            actor, _item, EQUIPMENT_SLOT_CHEST, legacyMemoryMessage);
-        state->needsRefresh = true;
-        state = EnsureState(actor);
-        context.Expect(learnedLegacyMemory
-                && Fabled::IsUnlocked(actor, Fabled::Effect::Warcaster)
-                && Fabled::AttunedEffect(actor, EQUIPMENT_SLOT_CHEST)
-                    == Fabled::Effect::None
-                && !Fabled::Has(Fabled::GetRuntime(actor), Fabled::Effect::Warcaster)
-                && HasExactPoints(*state, ORDINARY_MASK),
-            "incompatible legacy provenance teaches without inventing an active slot",
-            legacyMemoryMessage);
-        _item->SetBonusSeed(MakeItemBonusSeed(generatedBonusId));
-        state->needsRefresh = true;
-        state = EnsureState(actor);
-        context.Expect(clearedKeeper && HasExactPoints(*state, ORDINARY_MASK)
-                && !Fabled::Has(Fabled::GetRuntime(actor), Fabled::Effect::Keeper),
-            "clearing an attunement restores the exact slot's ordinary package",
-            clearMessage);
-        CharacterDatabase.DirectExecute(
-            "DELETE FROM `mod_tertiary_fabled` WHERE `guid`={} AND `effect` IN ({}, {})",
-            actor->GetGUID().GetCounter(), uint32(Fabled::Effect::Keeper),
-            uint32(Fabled::Effect::Warcaster));
-        context.Expect(context.Engage(dummy->GetGUID()),
-            "hostile target re-engages after attunement changes");
-
 
         constexpr std::array<uint32, 6> KINGS_AURAS = {
             20217, 25898, 43223, 56525, 58054, 72586
@@ -3264,6 +3325,8 @@ public:
                 && !actor->HasAura(SPELL_FLEETFOOT_FLIGHT_PASSIVE),
             "ordinary passives removed after equipment changes");
 
+        _savedTestSettings = std::move(state->testSettings);
+        _testSettingsSaved = true;
         Settings& procTestSettings = TestSettings(actor);
         procTestSettings.tempoPpmBase = 60.0f;
         procTestSettings.tempoPpmPerPoint = 0.0f;
@@ -3379,6 +3442,7 @@ public:
             Player* actor = context.GetActor();
             if (!actor)
             {
+                Cancel(context);
                 context.Fail("area test actor remains available");
                 return;
             }
@@ -3391,7 +3455,7 @@ public:
                 context.Fail(_stage == Stage::AwaitAreaBaseline
                     ? "baseline Death and Decay deals damage"
                     : "Opportunity Death and Decay deals damage");
-                RestoreShadowCrit(actor);
+                Cancel(context);
                 return;
             }
 
@@ -3499,6 +3563,7 @@ public:
             Player* actor = context.GetActor();
             if (!actor || !_item)
             {
+                Cancel(context);
                 context.Fail("test objects remain available");
                 return;
             }
@@ -3710,60 +3775,6 @@ public:
             _elapsed = 0;
             return;
         }
-
-        if (_stage != Stage::AwaitPersistence)
-            return;
-
-        _pollElapsed += diff;
-        if (_pollElapsed < 100)
-            return;
-        _pollElapsed = 0;
-
-        uint32 persistedSeed = 0;
-        bool rowFound = false;
-        if (QueryResult result = CharacterDatabase.Query(
-                "SELECT `bonusSeed` FROM `item_instance` WHERE `guid` = {}", _itemGuid.GetCounter()))
-        {
-            persistedSeed = result->Fetch()[0].Get<uint32>();
-            rowFound = true;
-        }
-
-        if (rowFound && uint16(persistedSeed & ITEM_BONUS_ID_MASK) == _expectedBonusId)
-        {
-            if (!_rerollNoBindGuid.IsEmpty())
-            {
-                QueryResult rerolled = CharacterDatabase.Query(
-                    "SELECT creatorGuid, giftCreatorGuid, count, duration, charges, flags, "
-                    "enchantments, randomPropertyId, durability, playedTime, text, bonusSeed "
-                    "FROM item_instance WHERE guid = {}", _rerollNoBindGuid.GetCounter());
-                if (!rerolled && _elapsed < 5000)
-                    return;
-                Item loaded;
-                Player* actor = context.GetActor();
-                context.Expect(rerolled && actor
-                        && loaded.LoadFromDB(_rerollNoBindGuid.GetCounter(), actor->GetGUID(),
-                            rerolled->Fetch(), 4381)
-                        && loaded.IsSoulBound(),
-                    "rerolled unbound equipment remains soulbound after database reload");
-                if (actor)
-                    if (Item* item = actor->GetItemByGuid(_rerollNoBindGuid))
-                        actor->DestroyItem(item->GetBagSlot(), item->GetSlot(), true);
-                _rerollNoBindGuid.Clear();
-            }
-            context.Expect(true, "item atomically persists its bonus seed",
-                "seed=" + std::to_string(persistedSeed));
-            context.Finish();
-            _stage = Stage::Done;
-            return;
-        }
-
-        if (_elapsed < 5000)
-            return;
-
-        context.Expect(false, "item bonus seed persistence completes",
-            rowFound ? "seed=" + std::to_string(persistedSeed) : "item row missing");
-        context.Finish();
-        _stage = Stage::Done;
     }
 
     void Cancel(TestHarness::Context& context) override
@@ -3772,6 +3783,7 @@ public:
         {
             actor->RemoveDynObject(49938);
             RestoreShadowCrit(actor);
+            RestoreTestSettings(actor);
         }
     }
 
@@ -3782,9 +3794,17 @@ private:
         AwaitUnbroken,
         AwaitAreaBaseline,
         AwaitAreaEmpowered,
-        AwaitPersistence,
         Done
     };
+
+    void RestoreTestSettings(Player* actor)
+    {
+        if (!_testSettingsSaved)
+            return;
+        if (TertiaryState* state = FindState(actor))
+            state->testSettings = std::move(_savedTestSettings);
+        _testSettingsSaved = false;
+    }
 
     int64 FindAreaDamage(TestHarness::Context& context) const
     {
@@ -3884,16 +3904,9 @@ private:
         sScriptMgr->OnPlayerUpdate(actor, 0);
         context.Expect(!state->disabled && HasExactPoints(*state, TEMPO_OPPORTUNITY_MASK),
             "live re-enable refreshes equipped tertiary bonuses");
-        ClearTestSettings(actor);
-
-        CharacterDatabaseTransaction transaction = CharacterDatabase.BeginTransaction();
-        actor->SaveInventoryAndGoldToDB(transaction);
-        CharacterDatabase.CommitTransaction(transaction);
-
-        _expectedBonusId = TertiaryBonusOf(_item);
-        _stage = Stage::AwaitPersistence;
-        _elapsed = 0;
-        _pollElapsed = 0;
+        RestoreTestSettings(actor);
+        context.Finish();
+        _stage = Stage::Done;
     }
 
     TertiaryState* RefreshForMask(Player* actor, uint8 mask)
@@ -3913,23 +3926,19 @@ private:
         return true;
     }
 
+    std::unique_ptr<Settings> _savedTestSettings;
+    bool _testSettingsSaved = false;
     Stage _stage = Stage::Done;
     Item* _item = nullptr;
-    ObjectGuid _itemGuid;
-    ObjectGuid _rerollNoBindGuid;
     ObjectGuid _dummyGuid;
     uint16 _pointBudget = 0;
     uint32 _elapsed = 0;
-    uint32 _pollElapsed = 0;
-    uint16 _expectedBonusId = 0;
-    int32 _nativeProperty = 0;
     ObjectGuid _areaDummyGuid;
     ObjectGuid _areaOwnerGuid;
     AuraEffect* _areaPeriodicEffect = nullptr;
     int64 _baselineAreaDamage = 0;
     float _savedShadowCrit = 0.0f;
     bool _shadowCritOverridden = false;
-    uint32 _nativeSuffixFactor = 0;
 };
 
 } // namespace
@@ -3940,10 +3949,22 @@ void AddSC_tertiary_stats()
     Fabled::RegisterTests();
     Fabled::RegisterAttunementSnapshotParticipant();
 
-    TestHarness::RegisterSuite("tertiary-stats",
-        [] { return std::make_unique<TertiaryStatsTestSuite>(); });
+    TestHarness::RegisterSuite("tertiary-generation",
+        [] { return std::make_unique<TertiaryGenerationTestSuite>(); });
+    TestHarness::RegisterSuite("tertiary-rerolls",
+        [] { return std::make_unique<TertiaryRerollTestSuite>(); });
+    TestHarness::RegisterSuite("tertiary-attunements",
+        [] { return std::make_unique<TertiaryAttunementTestSuite>(); });
+    TestHarness::RegisterSuite("tertiary-combat",
+        [] { return std::make_unique<TertiaryCombatTestSuite>(); });
+    TestHarness::RegisterSuiteGroup("tertiary-stats", {
+        "tertiary-generation", "tertiary-rerolls", "tertiary-attunements", "tertiary-combat"
+    });
     TestHarness::RegisterSuiteGroup("tertiary-all", {
-        "tertiary-stats",
+        "tertiary-generation",
+        "tertiary-rerolls",
+        "tertiary-attunements",
+        "tertiary-combat",
         "fabled-impact",
         "fabled-premonition",
         "fabled-momentum",

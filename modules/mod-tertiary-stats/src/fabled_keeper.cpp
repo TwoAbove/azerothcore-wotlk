@@ -211,7 +211,7 @@ public:
         _settingsSaved = true;
         TestSettings(actor).SetKeeperExtraSpells({});
 
-        Item* item = Test::EquipFabled(actor, Effect::Keeper);
+        Item* item = Test::EquipFabled(context, actor, Effect::Keeper);
         context.Expect(item != nullptr, "Keeper fabled trinket equipped");
         if (!item)
         {
@@ -292,7 +292,7 @@ public:
         }
 
         replacement->SetDuration(TEST_FROZEN_DURATION_MS);
-        Test::UnequipFabled(actor, Effect::Keeper);
+        Test::UnequipFabled(context, actor, Effect::Keeper);
         _equipped = false;
         context.Expect(runtime.keeper.managed.empty()
                 && replacement->GetDuration() == TEST_FROZEN_DURATION_MS
@@ -311,32 +311,35 @@ public:
             return;
         }
 
-        item = Test::EquipFabled(actor, Effect::Keeper);
+        item = Test::EquipFabled(context, actor, Effect::Keeper);
         _equipped = item != nullptr;
         context.Expect(item && IsTracked(runtime, elixir) && IsTracked(runtime, replacement),
-            "equipment refresh discovers existing finite auras as relog does");
+            "equipment refresh discovers existing finite auras after clearing and re-attuning");
         if (!item)
         {
             Cleanup(context);
             return;
         }
 
+        // Callback-level coverage deliberately retains the same applications:
+        // real death removes these non-death-persistent buffs.
         int32 elixirBeforeDeath = elixir->GetDuration();
         int32 replacementBeforeDeath = replacement->GetDuration();
-        HandleDeath(actor);
+        sScriptMgr->OnPlayerJustDied(actor);
         actor->Unit::Update(TEST_ELAPSED_MS);
         context.Expect(runtime.keeper.managed.empty()
                 && elixir->GetDuration() == elixirBeforeDeath - TEST_ELAPSED_MS
                 && replacement->GetDuration() == replacementBeforeDeath - TEST_ELAPSED_MS,
-            "death releases surviving aura timers while Keeper remains equipped");
+            "death callback releases retained aura timers while Keeper remains equipped");
 
-        HandleResurrect(actor);
+        bool applySickness = false;
+        sScriptMgr->OnPlayerResurrect(actor, 1.0f, applySickness);
         context.Expect(IsTracked(runtime, elixir) && IsTracked(runtime, replacement),
-            "resurrection re-enrolls surviving eligible auras without re-equipping");
+            "resurrection callback re-enrolls retained eligible auras without re-equipping");
         int32 elixirAfterResurrect = elixir->GetDuration();
         actor->Unit::Update(TEST_ELAPSED_MS);
         context.Expect(elixir->GetDuration() == elixirAfterResurrect,
-            "a surviving eligible aura pauses again after resurrection");
+            "a retained eligible aura pauses again after the resurrection callback");
 
         TestSettings(actor).SetKeeperExtraSpells("1243,774");
         actor->RemoveAurasDueToSpell(TEST_PERIODIC_SPELL);
@@ -353,7 +356,7 @@ public:
             context.Expect(actor->GetHealth() > 1
                     && actor->HasAura(TEST_PERIODIC_SPELL),
                 "paused aura keeps healing beyond its original finite tick budget");
-            Test::UnequipFabled(actor, Effect::Keeper);
+            Test::UnequipFabled(context, actor, Effect::Keeper);
             _equipped = false;
             actor->SetHealth(1);
             actor->Unit::Update(3000);
@@ -383,7 +386,7 @@ private:
         if (Player* actor = context.GetActor())
         {
             if (_equipped)
-                Test::UnequipFabled(actor, Effect::Keeper);
+                Test::UnequipFabled(context, actor, Effect::Keeper);
             actor->RemoveAurasDueToSpell(TEST_ELIXIR_SPELL);
             actor->RemoveAurasDueToSpell(TEST_EXTRA_SPELL);
             actor->RemoveAurasDueToSpell(TEST_PERIODIC_SPELL);

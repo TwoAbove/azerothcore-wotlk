@@ -244,7 +244,7 @@ public:
         }
         actor->SetFullHealth();
 
-        _equipped = Test::EquipFabled(actor, Effect::VengefulGhost) != nullptr;
+        _equipped = Test::EquipFabled(context, actor, Effect::VengefulGhost) != nullptr;
         context.Expect(_equipped, "Vengeful Ghost trinket equipped");
         context.Expect(actor->HasAura(SPELL_VENGEFUL_GUARD),
             "Vengeful Ghost equips its native absorb guard");
@@ -299,9 +299,10 @@ public:
             "Vengeful phase runtime is armed");
         runtime.vengefulGhost.phaseActive = false;
         runtime.vengefulGhost.phaseEndMs = 0;
-        SetMask(actor, runtime.mask);
+        sScriptMgr->OnPlayerLevelChanged(actor, actor->GetLevel());
+        sScriptMgr->OnPlayerUpdate(actor, 0);
         context.Expect(runtime.vengefulGhost.phaseActive && runtime.vengefulGhost.phaseEndMs > Now(),
-            "persisted phase aura reconstructs Vengeful runtime after a login-style refresh");
+            "registered level-change refresh reconstructs runtime from the existing phase aura");
 
         TestHarness::Event const* firstFinalDamage = context.FindEvent(
             TestHarness::EventType::DamageFinal, firstDummy->GetGUID(), actor->GetGUID());
@@ -327,7 +328,7 @@ public:
 
         sScriptMgr->OnPlayerBeforeLogout(actor);
         context.Expect(actor->IsAlive() && actor->GetHealth() == expectedRestoredHealth,
-            "logout after earning a phase kill does not kill or alter the actor");
+            "before-logout hook after earning a phase kill does not alter the actor");
 
         actor->RemoveSpellCooldown(SPELL_VENGEFUL_COOLDOWN);
         context.Expect(!actor->HasSpellCooldown(SPELL_VENGEFUL_COOLDOWN),
@@ -380,25 +381,26 @@ public:
         actor->SpawnCorpseBones();
         actor->SetFullHealth();
         actor->RemoveSpellCooldown(SPELL_VENGEFUL_COOLDOWN);
-        SetMask(actor, runtime.mask);
+        sScriptMgr->OnPlayerLevelChanged(actor, actor->GetLevel());
+        sScriptMgr->OnPlayerUpdate(actor, 0);
         Creature* logoutDummy = context.GetCreature(_secondDummyGuid);
         context.Expect(logoutDummy != nullptr, "logout phase attacker remains available");
         if (logoutDummy)
         {
             DealNativeTestDamage(logoutDummy, actor);
             context.Expect(actor->IsAlive() && runtime.vengefulGhost.phaseActive,
-                "lethal damage arms a fresh phase before logout");
+                "lethal damage arms a fresh phase before the before-logout hook");
             // Exercise the production pre-save hook without destroying the harness session.
             sScriptMgr->OnPlayerBeforeLogout(actor);
             context.Expect(!actor->IsAlive() && !runtime.vengefulGhost.phaseActive
                     && !actor->HasAura(SPELL_VENGEFUL_PHASE),
-                "logout settles an unearned phase as real death before character saving");
+                "before-logout hook settles an unearned phase as real death");
             sScriptMgr->OnPlayerBeforeLogout(actor);
             actor->ResurrectPlayer(1.0f);
             actor->SpawnCorpseBones();
             sScriptMgr->OnPlayerBeforeLogout(actor);
             context.Expect(actor->IsAlive(),
-                "settled phase cannot kill again on a later logout after resurrection");
+                "settled phase cannot kill again on a later before-logout hook after resurrection");
         }
 
         CleanupAndFinish(context);
@@ -423,7 +425,7 @@ private:
         {
             if (_equipped)
             {
-                Test::UnequipFabled(actor, Effect::VengefulGhost);
+                Test::UnequipFabled(context, actor, Effect::VengefulGhost);
                 _equipped = false;
             }
             actor->RemoveAurasDueToSpell(SPELL_VENGEFUL_PHASE);

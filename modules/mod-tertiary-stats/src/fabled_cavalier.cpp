@@ -97,7 +97,7 @@ public:
         if (dummy)
             _dummyGuid = dummy->GetGUID();
 
-        context.Expect(Test::EquipFabled(actor, Effect::Cavalier) != nullptr,
+        context.Expect(Test::EquipFabled(context, actor, Effect::Cavalier) != nullptr,
             "Cavalier trinket equipped");
 
         SpellInfo const* mountInfo = sSpellMgr->GetSpellInfo(SPELL_BROWN_HORSE);
@@ -174,7 +174,7 @@ public:
             context.Expect(!IsEligibleGroundMount(true, true, true, false),
                 "Cavalier rejects taxi flight at predicate level");
 
-            Test::UnequipFabled(actor, Effect::Cavalier);
+            Test::UnequipFabled(context, actor, Effect::Cavalier);
 
             Spell unequippedCast(actor, damageInfo, TRIGGERED_NONE);
             unequippedCast.m_targets.SetUnitTarget(dummy);
@@ -191,7 +191,7 @@ public:
         {
             if (actor)
             {
-                Test::UnequipFabled(actor, Effect::Cavalier);
+                Test::UnequipFabled(context, actor, Effect::Cavalier);
                 actor->RemoveAurasByType(SPELL_AURA_MOUNTED);
                 actor->Dismount();
             }

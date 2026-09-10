@@ -121,8 +121,8 @@ public:
         _settingsSaved = true;
         TestSettings(actor).overkillWindowMs = 1000;
 
-        Test::UnequipFabled(actor, Effect::Overkill);
-        _equipped = Test::EquipFabled(actor, Effect::Overkill) != nullptr;
+        Test::UnequipFabled(context, actor, Effect::Overkill);
+        _equipped = Test::EquipFabled(context, actor, Effect::Overkill) != nullptr;
         context.Expect(_equipped, "Overkill fabled trinket equipped");
         if (!_equipped)
         {
@@ -490,7 +490,7 @@ private:
 
         if (Player* actor = context.GetActor())
             if (_equipped)
-                Test::UnequipFabled(actor, Effect::Overkill);
+                Test::UnequipFabled(context, actor, Effect::Overkill);
         _equipped = false;
 
         context.DespawnAllDummies();

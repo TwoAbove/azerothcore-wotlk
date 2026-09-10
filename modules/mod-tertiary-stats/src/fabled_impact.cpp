@@ -89,7 +89,7 @@ public:
         _settingsSaved = true;
         TestSettings(actor).impactRadiusYd = 20.0f;
 
-        _equipped = Test::EquipFabled(actor, Effect::Impact) != nullptr;
+        _equipped = Test::EquipFabled(context, actor, Effect::Impact) != nullptr;
         context.Expect(_equipped, "Impact fabled trinket equipped");
         if (!_equipped)
         {
@@ -218,7 +218,7 @@ private:
         {
             actor->SetHealth(actor->GetMaxHealth());
             if (_equipped)
-                Test::UnequipFabled(actor, Effect::Impact);
+                Test::UnequipFabled(context, actor, Effect::Impact);
         }
         _equipped = false;
 

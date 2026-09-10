@@ -1,239 +1,341 @@
 local addonPath = arg[1] or "../TertiaryStatsUI/TertiaryStatsUI.lua"
 
-local controller
-LibStub = function()
-    return {}
+-- Only WoW/LibQTip boundaries are mocked. Unimplemented APIs deliberately fail.
+local frames, menu, popup, sent, visibleSidecar = {}, nil, nil, nil, nil
+local function noop() end
+local widget = {}
+for _, method in ipairs({ "SetPoint", "SetAllPoints", "SetHeight", "SetWidth",
+    "SetFrameStrata", "SetFrameLevel", "SetClampedToScreen", "SetBackdrop",
+    "SetBackdropColor", "SetBackdropBorderColor", "EnableMouse", "SetTexture",
+    "SetVertexColor", "SetTextColor", "SetJustifyH" }) do
+    widget[method] = noop
 end
-GameTooltip = {
-    IsShown = function()
-        return false
-    end,
-}
-ItemRefTooltip = {}
-StaticPopupDialogs = {}
-ACCEPT = "Accept"
-CANCEL = "Cancel"
-CreateFrame = function(_, name)
-    local frame = { scripts = {} }
-    function frame:RegisterEvent() end
-    function frame:SetScript(script, callback)
-        self.scripts[script] = callback
+function widget:SetText(text) self.text = text end
+function widget:SetScript(event, callback) self.scripts[event] = callback end
+function widget:HookScript(event, callback)
+    local previous = self.scripts[event]
+    self.scripts[event] = function(...)
+        if previous then previous(...) end
+        callback(...)
     end
-    if name == "TertiaryStatsUIController" then
-        controller = frame
-    end
+end
+function widget:RegisterEvent(event) self.events[event] = true end
+function widget:IsShown() return self.shown end
+function widget:Show() self.shown = true end
+function widget:Hide()
+    self.shown = false
+    if self.scripts.OnHide then self.scripts.OnHide(self) end
+end
+function widget:Enable() self.enabled = true end
+function widget:Disable() self.enabled = false end
+function widget:GetFrameLevel() return 1 end
+function widget:CreateFontString()
+    local region = setmetatable({}, { __index = widget })
+    self.regions[#self.regions + 1] = region
+    return region
+end
+widget.CreateTexture = widget.CreateFontString
+CreateFrame = function(kind, name, parent)
+    local frame = setmetatable({ kind = kind, parent = parent, scripts = {},
+        events = {}, regions = {}, shown = true, enabled = true }, { __index = widget })
+    frames[#frames + 1] = frame
+    if name then _G[name] = frame end
     return frame
 end
-UnitName = function(unit)
-    return unit == "player" and "LocalPlayer" or nil
-end
-GetTime = function()
-    return 1
-end
-
-dofile(addonPath)
-assert(controller and controller.scripts.OnEvent, "addon event handler was not installed")
-local onEvent = controller.scripts.OnEvent
-
-local function upvalue(callback, wanted)
-    for index = 1, 100 do
-        local name, value = debug.getupvalue(callback, index)
-        if not name then
-            break
-        end
-        if name == wanted then
-            return value
-        end
+UIParent = CreateFrame("Frame")
+CharacterFrame = CreateFrame("Frame")
+CharacterFrame:Hide()
+GameTooltip = CreateFrame("GameTooltip")
+ItemRefTooltip = CreateFrame("GameTooltip")
+local equipLoc = "INVTYPE_FINGER"
+function GameTooltip:GetItem() return "Item", self.link end
+function GameTooltip:SetBagItem(bag, slot) self.link = GetContainerItemLink(bag, slot) end
+function GameTooltip:SetInventoryItem(unit, slot) self.link = GetInventoryItemLink(unit, slot) end
+function GameTooltip:SetLootItem(slot) self.link = "loot:" .. slot end
+function GameTooltip:SetAuctionItem(list, index) self.link = list .. ":" .. index end
+function GameTooltip:SetQuestItem(kind, index) self.link = kind .. ":" .. index end
+hooksecurefunc = function(object, method, callback)
+    local original = assert(object[method], "missing client method " .. method)
+    object[method] = function(self, ...)
+        original(self, ...)
+        callback(self, ...)
     end
-    error("missing upvalue " .. wanted)
 end
-
-local handle = upvalue(onEvent, "HandleProtocolMessage")
-local function generation()
-    return upvalue(handle, "inventoryGeneration")
+local qtip = {}
+function qtip:Acquire()
+    local tooltip = { lines = {} }
+    function tooltip:AddLine(...)
+        self.lines[#self.lines + 1] = { ... }
+        return #self.lines
+    end
+    tooltip.AddHeader = tooltip.AddLine
+    function tooltip:SetCell(line, column, text) self.lines[line][column] = text end
+    function tooltip:GetLineCount() return #self.lines end
+    function tooltip:Show() visibleSidecar = self end
+    for _, method in ipairs({ "AddSeparator", "SetFrameStrata", "SetFrameLevel",
+        "SetFont", "SetHeaderFont", "SmartAnchorTo" }) do
+        tooltip[method] = noop
+    end
+    return tooltip
 end
-local function receive(payload, channel, sender)
-    onEvent(nil, "CHAT_MSG_ADDON", "TStats", payload,
-        channel or "WHISPER", sender or "LocalPlayer")
+function qtip:Release(tooltip)
+    if visibleSidecar == tooltip then visibleSidecar = nil end
 end
-
-receive("V3:I:C:1", "PARTY", "LocalPlayer")
-receive("V3:I:C:1", "WHISPER", "OtherPlayer")
-receive("V1:I:C:1")
-receive("V2:I:C:1")
-assert(generation() == 0, "untrusted or mismatched protocol messages were accepted")
-
-receive("V3:I:C:5")
-receive("V3:I:B:5:0:4:101:12345:D:17:69:13")
-receive("V3:I:E:5:16:4294967295:54321:D:0:0:11")
-receive("V3:I:D:5")
-local bags = upvalue(handle, "bagDefinitions")
-local equipped = upvalue(handle, "equippedDefinitions")
-local combined = bags["0:4"]
-assert(combined and combined.points == 17 and combined.fabled == 13
-    and combined.rerollCost == 12345 and combined.guidLow == 101,
-    "combined ordinary, Fabled, and reroll data did not parse")
-assert(#combined.powers == 3 and combined.powers[1] == 1
-    and combined.powers[2] == 3 and combined.powers[3] == 7,
-    "ordinary mask did not round-trip from the combined record")
-assert(equipped[16] and equipped[16].fabled == 11
-    and equipped[16].rerollCost == 54321 and equipped[16].guidLow == 4294967295
-    and #equipped[16].powers == 0,
-    "Fabled-only migration exception did not parse")
-
-receive("V3:I:C:4")
-receive("V3:I:D:4")
-assert(upvalue(handle, "bagDefinitions")["0:4"] == combined,
-    "an older generation replaced the committed inventory frame")
-
-receive("V3:I:C:6")
-receive("V3:I:B:6:0:4:102:10000:D:99:2:0")
-assert(upvalue(handle, "bagDefinitions")["0:4"] == combined,
-    "an incomplete frame partially replaced the committed inventory frame")
-receive("V3:I:C:7")
-receive("V3:I:B:7:0:4:103:20000:D:23:16:0")
-receive("V3:I:D:6")
-assert(upvalue(handle, "bagDefinitions")["0:4"] == combined,
-    "a stale Done committed an abandoned inventory frame")
-receive("V3:I:D:7")
-local replacement = upvalue(handle, "bagDefinitions")["0:4"]
-assert(replacement.points == 23 and replacement.powers[1] == 5
-    and replacement.rerollCost == 20000,
-    "matching Done did not atomically commit the current inventory frame")
-
-receive("V3:L:C:6")
-receive("V3:L:R:6:2:D:0:0:4")
-receive("V3:L:D:6")
-assert(upvalue(handle, "lootDefinitions")[2].fabled == 4,
-    "loot frame did not parse")
-
-receive("V3:A:C:7:0")
-receive("V3:A:R:7:0:3:D:9:2:0")
-receive("V3:A:D:7:0")
-local auction = upvalue(handle, "auctionDefinitions")
-assert(auction[0][3].points == 9 and auction[0][3].powers[1] == 2,
-    "auction frame did not parse")
-
-receive("V3:M:C:8")
-receive("V3:M:U:8:1032")
-receive("V3:M:S:8:15:4")
-receive("V3:M:S:8:16:11")
-receive("V3:M:D:8")
-local unlocked = upvalue(handle, "unlockedFabled")
-local attuned = upvalue(handle, "attunedBySlot")
-assert(unlocked[4] and unlocked[11] and attuned[15] == 4 and attuned[16] == 11,
-    "Fabled memories did not commit atomically")
-
-receive("V3:M:C:9")
-receive("V3:M:U:9:1")
-receive("V3:M:C:10")
-receive("V3:M:U:10:2")
-receive("V3:M:S:10:13:2")
-receive("V3:M:D:9")
-assert(upvalue(handle, "attunedBySlot")[16] == 11,
-    "a stale Fabled Done committed an abandoned frame")
-receive("V3:M:D:10")
-assert(upvalue(handle, "unlockedFabled")[2]
-    and upvalue(handle, "attunedBySlot")[13] == 2,
-    "current Fabled frame did not replace the prior frame")
-
-receive("V3:R:C:0")
-local reroll = upvalue(handle, "rerollSettings")
-assert(not reroll.enabled, "disabled reroll setting did not parse")
-receive("V3:R:C:1")
-assert(upvalue(handle, "rerollSettings").enabled,
-    "enabled reroll setting did not parse")
--- Invalid identities and incomplete records must never become reroll targets.
-receive("V3:I:C:8")
-for _, identity in ipairs({ "0", "4294967296", "-1", "1.5", "1e2", "0x10", " 12", "", "abc" }) do
-    receive("V3:I:B:8:0:1:" .. identity .. ":100:D:9:2:0")
-    receive("V3:I:E:8:1:" .. identity .. ":100:D:9:2:0")
+LibStub = function(name)
+    assert(name == "LibQTip-1.0")
+    return qtip
 end
-for _, cost in ipairs({ "-1", "2147483648", "1.5", "1e2", "", "abc" }) do
-    receive("V3:I:B:8:0:2:104:" .. cost .. ":D:9:2:0")
-end
-receive("V3:I:B:8:0:3:100:D:9:2:0") -- obsolete record without GUID
-receive("V3:I:E:8:2:104:100:D:9:2") -- incomplete definition
-receive("V3:I:E:8:3:104:100:D:9:2:0:")
-receive("V3:I:E:8:4:104:100:D:9:2:0:extra")
-receive("V3:I:B:8:0:4:105:0:D:9:2:0")
-receive("V3:I:E:8:5:4294967295:2147483647:D:9:2:0")
-receive("V3:I:D:8")
-bags = upvalue(handle, "bagDefinitions")
-equipped = upvalue(handle, "equippedDefinitions")
-assert(not bags["0:1"] and not bags["0:2"] and not bags["0:3"]
-    and not equipped[1] and not equipped[2] and not equipped[3] and not equipped[4],
-    "malformed or obsolete inventory records were accepted")
-assert(bags["0:4"].rerollCost == 0 and equipped[5].rerollCost == 2147483647,
-    "valid identity/quote boundaries were rejected")
-receive("V3:I:D") -- missing generation after a completed frame must be harmless
-
-local showMenu = upvalue(upvalue(onEvent, "InstallCharacterPanel"), "ShowRerollMenu")
-local menu, popup, sent
+StaticPopupDialogs = {}
+ACCEPT, CANCEL = "Accept", "Cancel"
+UnitName = function(unit) return unit == "player" and "LocalPlayer" or nil end
+GetTime = function() return 1 end
 GetMoney = function() return 2147483647 end
 GetCoinTextureString = function(cost) return tostring(cost) end
 GetInventoryItemLink = function(_, slot) return "equipped:" .. slot end
 GetContainerNumSlots = function(bag) return bag == 0 and 4 or 0 end
 GetContainerItemLink = function(bag, slot) return "bag:" .. bag .. ":" .. slot end
+GetItemInfo = function(link) return link, link, nil, nil, nil, nil, nil, nil, equipLoc end
 EasyMenu = function(items) menu = items end
-StaticPopup_Show = function(_, _, _, data) popup = data end
+StaticPopup_Show = function(name, link, cost, data)
+    popup = { dialog = assert(StaticPopupDialogs[name]), link = link, cost = cost, data = data }
+end
 SendAddonMessage = function(prefix, payload, channel, recipient)
     assert(prefix == "TStats" and channel == "WHISPER" and recipient == "LocalPlayer")
     sent = payload
 end
-showMenu()
+
+local function event(name, ...)
+    for _, frame in ipairs(frames) do
+        if frame.events[name] then frame.scripts.OnEvent(frame, name, ...) end
+    end
+end
+local function receive(payload, channel, sender, prefix)
+    event("CHAT_MSG_ADDON", prefix or "TStats", payload,
+        channel or "WHISPER", sender or "LocalPlayer")
+end
+local function control(text)
+    for _, frame in ipairs(frames) do
+        if frame.text == text then return frame end
+        for _, region in ipairs(frame.regions) do
+            if region.text == text then return frame end
+        end
+    end
+    error("missing visible control: " .. text)
+end
+local function openMenu()
+    local button = control("Reroll Tertiary Powers")
+    assert(button.enabled, "reroll button is disabled")
+    menu = nil
+    button.scripts.OnClick(button)
+    return assert(menu, "reroll click did not open a menu")
+end
+local function accept(confirmation)
+    sent = nil
+    confirmation.dialog.OnAccept(nil, confirmation.data)
+    return sent
+end
+local function plain(text) return (text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end
+local function lines(section)
+    local result, active = {}, section == nil
+    for _, row in ipairs(visibleSidecar and visibleSidecar.lines or {}) do
+        local left = plain(row[1])
+        if section and (left == "Tertiary Stats" or left:match("^Compared with ")
+            or left:match("^Currently equipped: ")) then
+            active = left == section
+        elseif active then
+            result[#result + 1] = left .. (row[2] and "=" .. plain(row[2]) or "")
+        end
+    end
+    return table.concat(result, "\n")
+end
+local function has(text, expected)
+    assert(text:find(expected, 1, true), "missing " .. expected .. " in:\n" .. text)
+end
+local function lacks(text, unexpected)
+    assert(not text:find(unexpected, 1, true), "unexpected " .. unexpected .. " in:\n" .. text)
+end
+local function bagTooltip()
+    GameTooltip.scripts.OnTooltipCleared(GameTooltip)
+    GameTooltip:Show()
+    GameTooltip:SetBagItem(0, 4)
+    GameTooltip.scripts.OnTooltipSetItem(GameTooltip)
+end
+local function memories(gen, mask, slots)
+    receive("V3:M:C:" .. gen)
+    receive("V3:M:U:" .. gen .. ":" .. mask)
+    for slot, effect in pairs(slots) do receive("V3:M:S:" .. gen .. ":" .. slot .. ":" .. effect) end
+    receive("V3:M:D:" .. gen)
+end
+
+dofile(addonPath)
+event("PLAYER_LOGIN")
+assert(sent == "V3:S", "login did not request a snapshot")
+assert(not control("Reroll Tertiary Powers").enabled, "empty inventory enabled reroll")
+-- Send entire rejected frames: a rejected Clear alone is not observable.
+for _, source in ipairs({ { "V3", "PARTY", "LocalPlayer", "TStats" },
+    { "V3", "WHISPER", "OtherPlayer", "TStats" },
+    { "V3", "WHISPER", "LocalPlayer", "OtherAddon" },
+    { "V1", "WHISPER", "LocalPlayer", "TStats" },
+    { "V2", "WHISPER", "LocalPlayer", "TStats" } }) do
+    for _, body in ipairs({ ":I:C:100", ":I:B:100:0:4:101:100:D:17:69:13", ":I:D:100" }) do
+        receive(source[1] .. body, source[2], source[3], source[4])
+    end
+    bagTooltip()
+    assert(not visibleSidecar and not control("Reroll Tertiary Powers").enabled,
+        "untrusted or mismatched frame reached the UI")
+end
+receive("V3:I:C:5")
+receive("V3:I:B:5:0:4:101:12345:D:17:69:13")
+receive("V3:I:E:5:16:4294967295:54321:D:0:0:11")
+receive("V3:I:D:5")
+bagTooltip()
+has(lines("Tertiary Stats"), "Fabled: Warcaster")
+for _, power in ipairs({ "Avoidance", "Siphon", "Opportunity" }) do
+    has(lines("Tertiary Stats"), power .. "=+17")
+end
+assert(#openMenu() == 2, "Fabled-only item became rerollable")
+menu[2].func()
+assert(popup.cost == "12345" and accept(popup) == "V3:R:B:0:4:101:12345")
+GameTooltip:SetInventoryItem("player", 16)
+has(lines("Tertiary Stats"), "Fabled: Overkill")
+lacks(lines("Tertiary Stats"), "=+")
+bagTooltip()
+local committed = lines()
+receive("V3:I:C:4")
+receive("V3:I:D:4")
+assert(lines() == committed, "older inventory frame replaced the visible tooltip")
+receive("V3:I:C:6")
+receive("V3:I:B:6:0:4:102:10000:D:99:2:0")
+bagTooltip()
+assert(lines() == committed, "incomplete inventory frame leaked")
+receive("V3:I:C:7")
+receive("V3:I:B:7:0:4:103:20000:D:23:16:0")
+receive("V3:I:D:6")
+bagTooltip()
+assert(lines() == committed, "stale Done published an abandoned frame")
+receive("V3:I:D:7")
+has(lines("Tertiary Stats"), "Echo=+23")
+lacks(lines("Tertiary Stats"), "Avoidance")
+openMenu()[2].func()
+assert(accept(popup) == "V3:R:B:0:4:103:20000")
+receive("V3:L:C:6")
+receive("V3:L:R:6:2:D:0:0:4")
+receive("V3:L:D:6")
+GameTooltip:SetLootItem(2)
+has(lines("Tertiary Stats"), "Fabled: Ghostwalk")
+receive("V3:A:C:7:0")
+receive("V3:A:R:7:0:3:D:9:2:0")
+receive("V3:A:D:7:0")
+GameTooltip:SetAuctionItem("list", 3)
+has(lines("Tertiary Stats"), "Fleetfoot=+9")
+receive("V3:R:C:0")
+assert(not control("Reroll Tertiary Powers").enabled, "disabled reroll remained clickable")
+receive("V3:R:C:1")
+assert(control("Reroll Tertiary Powers").enabled, "enabled reroll stayed disabled")
+
+-- Each invalid record gets its own committed frame, so one rejected record cannot
+-- hide another record accidentally accepted at the same location.
+local generation = 7
+local function invalid(record)
+    generation = generation + 1
+    receive("V3:I:C:" .. generation)
+    receive("V3:I:" .. record:gsub("GEN", tostring(generation)))
+    receive("V3:I:D:" .. generation)
+    assert(not control("Reroll Tertiary Powers").enabled, "malformed target enabled reroll: " .. record)
+end
+for _, identity in ipairs({ "0", "4294967296", "-1", "1.5", "1e2", "0x10", " 12", "", "abc" }) do
+    invalid("B:GEN:0:1:" .. identity .. ":100:D:9:2:0")
+    invalid("E:GEN:1:" .. identity .. ":100:D:9:2:0")
+end
+for _, cost in ipairs({ "-1", "2147483648", "1.5", "1e2", "", "abc" }) do
+    invalid("B:GEN:0:2:104:" .. cost .. ":D:9:2:0")
+    invalid("E:GEN:2:104:" .. cost .. ":D:9:2:0")
+end
+for _, record in ipairs({ "B:GEN:0:3:100:D:9:2:0", "E:GEN:2:104:100:D:9:2",
+    "E:GEN:3:104:100:D:9:2:0:", "E:GEN:4:104:100:D:9:2:0:extra" }) do invalid(record) end
+local function inventory(bag, equipped)
+    generation = generation + 1
+    receive("V3:I:C:" .. generation)
+    receive("V3:I:B:" .. generation .. ":0:4:" .. bag)
+    receive("V3:I:E:" .. generation .. ":5:" .. equipped)
+    receive("V3:I:D:" .. generation)
+end
+inventory("105:0:D:9:2:0", "4294967295:2147483647:D:9:2:0")
+receive("V3:I:D")
+assert(#openMenu() == 3, "valid identity/quote boundaries were rejected")
 menu[2].func()
 local equippedPopup = popup
 menu[3].func()
 local bagPopup = popup
--- Replacing both targets and changing their prices cannot retarget an open confirmation.
-receive("V3:I:C:9")
-receive("V3:I:E:9:5:106:100:D:9:2:0")
-receive("V3:I:B:9:0:4:107:200:D:9:2:0")
-receive("V3:I:D:9")
-StaticPopupDialogs.TERTIARY_STATS_CONFIRM_REROLL.OnAccept(nil, equippedPopup)
-assert(sent == "V3:R:E:5:4294967295:2147483647", "equipped confirmation lost its GUID or quoted cost")
-StaticPopupDialogs.TERTIARY_STATS_CONFIRM_REROLL.OnAccept(nil, bagPopup)
-assert(sent == "V3:R:B:0:4:105:0", "bag confirmation was retargeted to the replacement item")
-showMenu()
-menu[3].func()
-StaticPopupDialogs.TERTIARY_STATS_CONFIRM_REROLL.OnAccept(nil, popup)
-assert(sent == "V3:R:B:0:4:107:200", "new confirmation did not use the refreshed snapshot")
+assert(equippedPopup.link == "equipped:5" and equippedPopup.cost == "2147483647")
+assert(bagPopup.link == "bag:0:4" and bagPopup.cost == "0")
+inventory("107:200:D:9:2:0", "106:100:D:9:2:0")
+assert(accept(equippedPopup) == "V3:R:E:5:4294967295:2147483647", "equipped confirmation was retargeted")
+assert(accept(bagPopup) == "V3:R:B:0:4:105:0", "bag confirmation was retargeted")
+openMenu()[3].func()
+assert(accept(popup) == "V3:R:B:0:4:107:200", "new confirmation missed the refreshed quote")
 
-local installHooks = upvalue(onEvent, "InstallTooltipHooks")
-local hookTooltip = upvalue(installHooks, "HookItemTooltip")
-local addTooltip = upvalue(hookTooltip, "AddTertiaryTooltip")
-local render = upvalue(addTooltip, "RenderTertiarySidecar")
-local compare = upvalue(render, "ComparisonDefinition")
-local candidate = { fabled = 13, points = 17, powers = { 1, 3 } }
-local function memories(gen, mask, slots)
-    receive("V3:M:C:" .. gen)
-    receive("V3:M:U:" .. gen .. ":" .. mask)
-    for slot, effect in pairs(slots) do
-        receive("V3:M:S:" .. gen .. ":" .. slot .. ":" .. effect)
-    end
-    receive("V3:M:D:" .. gen)
-end
-memories(11, 0, {})
-assert(compare(candidate, 11, true).fabled == 13
-    and #compare(candidate, 11, true).powers == 0, "first learning did not auto-attune")
-assert(not compare(candidate, 5, true).fabled
-    and compare(candidate, 5, true).powers[1] == 1, "incompatible provenance auto-attuned")
-memories(12, 4096, {})
-local cleared = compare(candidate, 11, true)
-assert(not cleared.fabled and cleared.points == 17 and cleared.powers[2] == 3,
-    "learned and cleared provenance suppressed the candidate's ordinary powers")
-memories(13, 4224, { [11] = 8, [12] = 13 })
-assert(compare(candidate, 11, true).fabled == 8
-    and #compare(candidate, 11, true).powers == 0,
-    "learned provenance replaced the destination slot's existing attunement")
-memories(14, 4096, { [12] = 13 })
-assert(not compare(candidate, 11, true).fabled
-    and compare(candidate, 11, true).powers[1] == 1,
-    "learned provenance moved an attunement from the other ring slot")
-memories(15, 0, { [12] = 13 })
-assert(not compare(candidate, 11, true).fabled,
-    "an existing same-effect attunement was treated as first learning")
-assert(not compare(candidate, 11, false).fabled,
-    "equipped item provenance was mistaken for an active attunement")
+-- Observe per-destination deltas, not the item's provenance header: provenance
+-- remains visible even when learned/cleared memories must not auto-attune.
+inventory("108:100:D:17:5:13", "109:100:D:0:0:0")
+memories(8, 0, {})
+bagTooltip()
+has(lines("Compared with Ring 1"), "Warcaster=+ gained")
+lacks(lines("Compared with Ring 1"), "Avoidance")
+equipLoc = "INVTYPE_CHEST"
+bagTooltip()
+has(lines("Compared with Chest"), "Avoidance=+17")
+lacks(lines("Compared with Chest"), "Warcaster")
+equipLoc = "INVTYPE_FINGER"
+memories(9, 4096, {})
+bagTooltip()
+local cleared = lines("Compared with Ring 1")
+has(cleared, "Avoidance=+17")
+has(cleared, "Siphon=+17")
+lacks(cleared, "Warcaster")
+receive("V3:M:C:10")
+receive("V3:M:U:10:0")
+bagTooltip()
+assert(lines("Compared with Ring 1") == cleared, "incomplete memories leaked")
+receive("V3:M:C:11")
+receive("V3:M:U:11:4224")
+receive("V3:M:S:11:11:8")
+receive("V3:M:S:11:12:13")
+receive("V3:M:D:10")
+bagTooltip()
+assert(lines("Compared with Ring 1") == cleared, "stale memories Done published")
+receive("V3:M:D:11")
+bagTooltip()
+has(lines("Compared with Ring 1"), "No tertiary change")
+lacks(lines("Compared with Ring 1"), "Warcaster")
+-- Exercise the installed row/menu hook and its checked destination/request.
+local row = control("Warcaster")
+assert(row:IsShown(), "learned memory did not appear in character panel")
+row.scripts.OnMouseUp(row, "LeftButton")
+assert(not menu[2].checked and menu[3].checked, "attunement menu selected the wrong ring")
+menu[2].func()
+assert(sent == "V3:A:13:11")
+menu[4].func()
+assert(sent == "V3:A:0:12")
+memories(12, 4096, { [12] = 13 })
+bagTooltip()
+has(lines("Compared with Ring 1"), "Siphon=+17")
+lacks(lines("Compared with Ring 1"), "Warcaster")
+has(lines("Compared with Ring 2"), "No tertiary change")
+memories(13, 0, { [12] = 13 })
+bagTooltip()
+has(lines("Compared with Ring 1"), "Avoidance=+17")
+lacks(lines("Compared with Ring 1"), "Warcaster")
+-- Equipped provenance alone is not active: quest comparisons expose the equipped
+-- effective powers without introducing a candidate's own auto-attunement.
+memories(14, 0, {})
+generation = generation + 1
+receive("V3:I:C:" .. generation)
+receive("V3:I:E:" .. generation .. ":11:109:100:D:17:5:13")
+receive("V3:I:D:" .. generation)
+GameTooltip:SetQuestItem("reward", 1)
+has(lines("Currently equipped: Ring 1"), "Avoidance=+17")
+lacks(lines("Currently equipped: Ring 1"), "Fabled:")
+GameTooltip:Hide()
+assert(not visibleSidecar, "tooltip hide left the sidecar visible")
 print("tertiary UI protocol and comparison: ok")

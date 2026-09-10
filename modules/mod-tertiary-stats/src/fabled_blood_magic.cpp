@@ -163,7 +163,7 @@ public:
         _savedMaxMana = actor->GetMaxPower(POWER_MANA);
         _explosionManaCost = explosion->CalcPowerCost(actor, explosion->GetSchoolMask());
         _frostboltManaCost = frostbolt->CalcPowerCost(actor, frostbolt->GetSchoolMask());
-        _equipped = Test::EquipFabled(actor, Effect::BloodMagic) != nullptr;
+        _equipped = Test::EquipFabled(context, actor, Effect::BloodMagic) != nullptr;
         context.Expect(_equipped && _explosionManaCost > 1 && _frostboltManaCost > 0,
             "Blood Magic trinket and mana costs resolve");
         if (!_equipped || _explosionManaCost <= 1 || _frostboltManaCost <= 0)
@@ -425,7 +425,7 @@ private:
             actor->InterruptNonMeleeSpells(false);
             actor->RemoveAurasDueToSpell(SPELL_BLOOD_MAGIC_DEBT);
             if (_equipped)
-                Test::UnequipFabled(actor, Effect::BloodMagic);
+                Test::UnequipFabled(context, actor, Effect::BloodMagic);
             if (!actor->IsAlive())
             {
                 actor->ResurrectPlayer(1.0f);

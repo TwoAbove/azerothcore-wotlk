@@ -89,14 +89,73 @@ struct Settings
     std::size_t maxEvents = 4096;
 };
 
+void HashValue(uint64& hash, uint64 value)
+{
+    constexpr uint64 FNV_PRIME = 1099511628211ULL;
+    for (uint8 i = 0; i < sizeof(value); ++i)
+    {
+        hash ^= value & 0xFF;
+        hash *= FNV_PRIME;
+        value >>= 8;
+    }
+}
+
 struct Fingerprint
 {
     uint64 value = 1469598103934665603ULL;
     std::string summary;
+    std::map<std::string, int64, std::less<>> fields;
+
+    void CalculateHash()
+    {
+        value = 1469598103934665603ULL;
+        for (auto const& [name, field] : fields)
+        {
+            HashValue(value, name.size());
+            for (unsigned char character : name)
+            {
+                value ^= character;
+                value *= 1099511628211ULL;
+            }
+            HashValue(value, uint64(field));
+        }
+    }
 
     bool operator==(Fingerprint const& other) const
     {
-        return value == other.value && summary == other.summary;
+        return fields == other.fields && summary == other.summary;
+    }
+
+    std::string Differences(Fingerprint const& actual) const
+    {
+        std::ostringstream output;
+        auto expectedField = fields.begin();
+        auto actualField = actual.fields.begin();
+        while (expectedField != fields.end() || actualField != actual.fields.end())
+        {
+            if (actualField == actual.fields.end()
+                || (expectedField != fields.end() && expectedField->first < actualField->first))
+            {
+                output << expectedField->first << ": expected=" << expectedField->second
+                    << " actual=<missing>\n";
+                ++expectedField;
+            }
+            else if (expectedField == fields.end() || actualField->first < expectedField->first)
+            {
+                output << actualField->first << ": expected=<missing> actual="
+                    << actualField->second << '\n';
+                ++actualField;
+            }
+            else
+            {
+                if (expectedField->second != actualField->second)
+                    output << expectedField->first << ": expected=" << expectedField->second
+                        << " actual=" << actualField->second << '\n';
+                ++expectedField;
+                ++actualField;
+            }
+        }
+        return output.str();
     }
 };
 
@@ -164,16 +223,6 @@ std::string EventTypeName(EventType type)
     return "unknown";
 }
 
-void HashValue(uint64& hash, uint64 value)
-{
-    constexpr uint64 FNV_PRIME = 1099511628211ULL;
-    for (uint8 i = 0; i < sizeof(value); ++i)
-    {
-        hash ^= value & 0xFF;
-        hash *= FNV_PRIME;
-        value >>= 8;
-    }
-}
 
 std::string RandomPassword()
 {
@@ -522,6 +571,12 @@ public:
 
     bool BeginTransaction(std::string reason, std::string& message)
     {
+        if (_initializing || _baselineReloadPending)
+        {
+            message = "actor baseline is not ready";
+            return false;
+        }
+
         Player* actor = GetActor();
         if (!actor)
         {
@@ -537,11 +592,9 @@ public:
 
         DespawnAllDummies();
         ClearEvents();
-        SaveActorSynchronously(*actor);
-
-        if (!WriteDump(_transactionPath, _guid.GetCounter()))
+        if (!SaveActorSynchronously(*actor) || !WriteDump(_transactionPath, _guid.GetCounter()))
         {
-            message = "failed to write transaction dump";
+            message = "failed to save actor transaction snapshot";
             return false;
         }
 
@@ -564,6 +617,8 @@ public:
                << _transactionFingerprint.value << '\n'
                << _transactionFingerprint.summary << '\n'
                << reason << '\n';
+        for (auto const& [field, value] : _transactionFingerprint.fields)
+            marker << std::quoted(field) << ' ' << value << '\n';
         marker.flush();
         if (!marker)
         {
@@ -609,10 +664,9 @@ public:
         }
 
         DespawnAllDummies();
-        SaveActorSynchronously(*actor);
-        if (!WriteDump(_baselinePath, _guid.GetCounter()))
+        if (!SaveActorSynchronously(*actor) || !WriteDump(_baselinePath, _guid.GetCounter()))
         {
-            message = "state saved, but replacing the golden baseline failed; transaction remains active";
+            message = "saving the golden baseline failed; transaction remains active";
             return false;
         }
 
@@ -834,6 +888,12 @@ public:
         if (factory == SuiteRegistry().end())
         {
             message = "unknown suite: " + suiteName;
+            return false;
+        }
+
+        if (_initializing || _baselineReloadPending)
+        {
+            message = "actor baseline is not ready";
             return false;
         }
 
@@ -1254,6 +1314,23 @@ private:
         }
 
         AcknowledgeTeleport(actor);
+        if (_baselineReloadPending)
+        {
+            _baselineReloadPending = false;
+            actor->ResetAllPowers();
+            if (!SaveActorSynchronously(*actor) || !WriteDump(_baselinePath, _guid.GetCounter()))
+            {
+                Disable("could not write round-tripped actor baseline");
+                return;
+            }
+            LOG_INFO("module", "TestHarness: round-tripped actor baseline ready name={} guid={} level={} map={}",
+                actor->GetName(), actor->GetGUID().GetCounter(), actor->GetLevel(), actor->GetMapId());
+            if (!_settings.autoStart)
+            {
+                StopActorInternal();
+                return;
+            }
+        }
         OnActorReady();
     }
 
@@ -1332,11 +1409,9 @@ private:
             return;
 
         actor->SetPhaseMask(_settings.phaseMask, true);
-        actor->SetFullHealth();
-        actor->SetPower(actor->getPowerType(), actor->GetMaxPower(actor->getPowerType()));
+        actor->ResetAllPowers();
         actor->RemoveAllSpellCooldown();
-        SaveActorSynchronously(*actor);
-        if (!WriteDump(_baselinePath, _guid.GetCounter()))
+        if (!SaveActorSynchronously(*actor) || !WriteDump(_baselinePath, _guid.GetCounter()))
         {
             _initializing = false;
             Disable("could not write initial actor baseline");
@@ -1344,13 +1419,13 @@ private:
         }
 
         _initializing = false;
-        LOG_INFO("module", "TestHarness: actor baseline ready name={} guid={} level={} map={} position={:.3f},{:.3f},{:.3f}",
-            actor->GetName(), actor->GetGUID().GetCounter(), actor->GetLevel(), actor->GetMapId(),
-            actor->GetPositionX(), actor->GetPositionY(), actor->GetPositionZ());
-        if (_settings.autoStart)
-            OnActorReady();
-        else
-            StopActorInternal();
+        _baselineReloadPending = true;
+        if (!QueueRestore(_baselinePath, _accountId, _guid.GetCounter(),
+                _settings.actorName, true, RestoreKind::Baseline))
+        {
+            _baselineReloadPending = false;
+            Disable("initial actor baseline round-trip could not be queued");
+        }
     }
 
     void OnActorReady()
@@ -1375,9 +1450,11 @@ private:
             if (exact)
                 LOG_INFO("module", "TestHarness: rollback fingerprint PASS value={} summary={}", actual.value, actual.summary);
             else
-                LOG_ERROR("module", "TestHarness: rollback fingerprint FAIL expected={} ({}) actual={} ({})",
-                    _transactionFingerprint.value, _transactionFingerprint.summary, actual.value, actual.summary);
-            FinalizePendingReport(exact, exact ? std::string() : "actor fingerprint differs after rollback");
+                LOG_ERROR("module", "TestHarness: rollback fingerprint FAIL expected={} ({}) actual={} ({})\n{}",
+                    _transactionFingerprint.value, _transactionFingerprint.summary, actual.value, actual.summary,
+                    _transactionFingerprint.Differences(actual));
+            FinalizePendingReport(exact, exact ? std::string()
+                : "actor fingerprint differs after rollback:\n" + _transactionFingerprint.Differences(actual));
         }
 
         LOG_INFO("module", "TestHarness: actor online name={} guid={} map={}",
@@ -1419,19 +1496,25 @@ private:
         _session.reset();
     }
 
-    static void SaveActorSynchronously(Player& actor)
+    static bool SaveActorSynchronously(Player& actor)
     {
         CharacterDatabaseTransaction transaction = CharacterDatabase.BeginTransaction();
         actor.SaveToDB(transaction, false, false);
 
         bool done = false;
+        bool succeeded = false;
         TransactionCallback callback = CharacterDatabase.AsyncCommitTransaction(transaction);
-        callback.AfterComplete([&done](bool) { done = true; });
+        callback.AfterComplete([&](bool result)
+        {
+            succeeded = result;
+            done = true;
+        });
         while (!done)
         {
             if (!callback.InvokeIfReady())
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
+        return succeeded;
     }
 
     bool WriteDump(std::filesystem::path const& path, ObjectGuid::LowType guid)
@@ -1737,8 +1820,22 @@ private:
         std::string ignored;
         std::getline(marker, ignored);
         std::getline(marker, _transactionReason);
+        Fingerprint expected;
+        expected.summary = std::move(summary);
+        std::string field;
+        int64 value;
+        while (marker >> std::quoted(field))
+        {
+            if (!(marker >> value) || !expected.fields.emplace(field, value).second)
+                return false;
+        }
+        if (!marker.eof() || expected.fields.empty())
+            return false;
+        expected.CalculateHash();
+        if (expected.value != fingerprint)
+            return false;
         guid = ObjectGuid::LowType(parsedGuid);
-        _transactionFingerprint = { fingerprint, std::move(summary) };
+        _transactionFingerprint = std::move(expected);
         return true;
     }
 
@@ -1753,24 +1850,28 @@ private:
         _transactionReason.clear();
     }
 
-    Fingerprint FingerprintActor(Player const& actor) const
+    static Fingerprint FingerprintActor(Player const& actor)
     {
         Fingerprint fingerprint;
-        auto add = [&](uint64 value) { HashValue(fingerprint.value, value); };
-        add(actor.GetLevel());
-        add(actor.GetHealth());
-        add(actor.GetMaxHealth());
-        add(actor.GetMoney());
-        add(actor.GetMapId());
-        add(actor.GetPhaseMask());
-        add(uint64(std::llround(actor.GetPositionX() * 1000.0f)));
-        add(uint64(std::llround(actor.GetPositionY() * 1000.0f)));
-        add(uint64(std::llround(actor.GetPositionZ() * 1000.0f)));
-        add(uint64(std::llround(actor.GetOrientation() * 100000.0f)));
+        auto add = [&](std::string name, int64 value)
+        {
+            fingerprint.fields.emplace(std::move(name), value);
+        };
+        add("level", actor.GetLevel());
+        add("health.current", actor.GetHealth());
+        add("health.maximum", actor.GetMaxHealth());
+        add("money", actor.GetMoney());
+        add("map", actor.GetMapId());
+        add("phase", actor.GetPhaseMask());
+        add("position.x.milliyards", std::llround(actor.GetPositionX() * 1000.0f));
+        add("position.y.milliyards", std::llround(actor.GetPositionY() * 1000.0f));
+        add("position.z.milliyards", std::llround(actor.GetPositionZ() * 1000.0f));
+        add("orientation.100000ths", std::llround(actor.GetOrientation() * 100000.0f));
         for (uint8 power = POWER_MANA; power < MAX_POWERS; ++power)
         {
-            add(actor.GetPower(Powers(power)));
-            add(actor.GetMaxPower(Powers(power)));
+            std::string prefix = "powers." + std::to_string(power);
+            add(prefix + ".current", actor.GetPower(Powers(power)));
+            add(prefix + ".maximum", actor.GetMaxPower(Powers(power)));
         }
 
         std::size_t spellCount = 0;
@@ -1778,18 +1879,18 @@ private:
         {
             if (!spell || spell->State == PLAYERSPELL_REMOVED)
                 continue;
-            add(spellId);
-            add(spell->Active);
-            add(spell->specMask);
+            std::string prefix = "spells." + std::to_string(spellId);
+            add(prefix + ".active", spell->Active);
+            add(prefix + ".specMask", spell->specMask);
             ++spellCount;
         }
 
         std::size_t cooldownCount = 0;
         for (auto const& [spellId, cooldown] : actor.GetSpellCooldownMap())
         {
-            add(spellId);
-            add(cooldown.category);
-            add(cooldown.itemid);
+            std::string prefix = "cooldowns." + std::to_string(spellId);
+            add(prefix + ".category", cooldown.category);
+            add(prefix + ".item", cooldown.itemid);
             ++cooldownCount;
         }
 
@@ -1799,39 +1900,34 @@ private:
             Aura const* aura = application ? application->GetBase() : nullptr;
             if (!aura)
                 continue;
-            add(spellId);
-            add(aura->GetStackAmount());
-            add(uint32(aura->GetMaxDuration()));
+            std::string prefix = "auras." + std::to_string(auraCount++)
+                + ".spell." + std::to_string(spellId);
+            add(prefix + ".stacks", aura->GetStackAmount());
+            add(prefix + ".maximumDuration", aura->GetMaxDuration());
             for (uint8 index = EFFECT_0; index < MAX_SPELL_EFFECTS; ++index)
                 if (AuraEffect const* effect = aura->GetEffect(index))
-                {
-                    add(index);
-                    add(uint32(effect->GetAmount()));
-                }
-            ++auraCount;
+                    add(prefix + ".effect." + std::to_string(index) + ".amount", effect->GetAmount());
         }
 
-        std::vector<uint32> skillIds;
-        skillIds.reserve(actor.GetSkillStatusMap().size());
+        std::size_t skillCount = 0;
         for (auto const& [skillId, status] : actor.GetSkillStatusMap())
-            if (status.uState != SKILL_DELETED)
-                skillIds.push_back(skillId);
-        std::sort(skillIds.begin(), skillIds.end());
-        for (uint32 skillId : skillIds)
         {
-            add(skillId);
-            add(actor.GetSkillStep(skillId));
-            add(actor.GetPureSkillValue(skillId));
-            add(actor.GetPureMaxSkillValue(skillId));
+            if (status.uState == SKILL_DELETED)
+                continue;
+            std::string prefix = "skills." + std::to_string(skillId);
+            add(prefix + ".step", actor.GetSkillStep(skillId));
+            add(prefix + ".current", actor.GetPureSkillValue(skillId));
+            add(prefix + ".maximum", actor.GetPureMaxSkillValue(skillId));
+            ++skillCount;
         }
 
         std::size_t reputationCount = 0;
         for (auto const& [listId, state] : actor.GetReputationMgr().GetStateList())
         {
-            add(listId);
-            add(state.ID);
-            add(uint32(state.Standing));
-            add(state.Flags);
+            std::string prefix = "reputations." + std::to_string(listId);
+            add(prefix + ".faction", state.ID);
+            add(prefix + ".standing", state.Standing);
+            add(prefix + ".flags", state.Flags);
             ++reputationCount;
         }
 
@@ -1840,18 +1936,19 @@ private:
         {
             if (!mail || mail->state == MAIL_STATE_DELETED)
                 continue;
-            add(mail->messageType);
-            add(mail->stationery);
-            add(mail->mailTemplateId);
-            add(mail->sender);
-            add(std::hash<std::string>{}(mail->subject));
-            add(std::hash<std::string>{}(mail->body));
-            add(mail->money);
-            add(mail->COD);
-            add(mail->checked);
+            std::string prefix = "mails." + std::to_string(mailCount++);
+            add(prefix + ".type", mail->messageType);
+            add(prefix + ".stationery", mail->stationery);
+            add(prefix + ".template", mail->mailTemplateId);
+            add(prefix + ".sender", mail->sender);
+            add(prefix + ".subjectHash", int64(std::hash<std::string>{}(mail->subject)));
+            add(prefix + ".bodyHash", int64(std::hash<std::string>{}(mail->body)));
+            add(prefix + ".money", mail->money);
+            add(prefix + ".cod", mail->COD);
+            add(prefix + ".checked", mail->checked);
+            std::size_t attachment = 0;
             for (MailItemInfo const& item : mail->items)
-                add(item.item_template);
-            ++mailCount;
+                add(prefix + ".attachment." + std::to_string(attachment++), item.item_template);
         }
 
         std::size_t itemCount = 0;
@@ -1859,12 +1956,14 @@ private:
         {
             if (!item)
                 return;
-            add(position);
-            add(item->GetEntry());
-            add(item->GetCount());
-            add(uint32(item->GetItemRandomPropertyId()));
-            add(item->GetItemPropertySeed());
-            add(item->GetUInt32Value(ITEM_FIELD_DURABILITY));
+            std::string prefix = "items." + std::to_string(position);
+            add(prefix + ".entry", item->GetEntry());
+            add(prefix + ".count", item->GetCount());
+            add(prefix + ".randomProperty", item->GetItemRandomPropertyId());
+            add(prefix + ".propertySeed", item->GetItemPropertySeed());
+            add(prefix + ".bonusSeed", item->GetBonusSeed());
+            add(prefix + ".flags", item->GetUInt32Value(ITEM_FIELD_FLAGS));
+            add(prefix + ".durability", item->GetUInt32Value(ITEM_FIELD_DURABILITY));
             ++itemCount;
         };
 
@@ -1886,11 +1985,12 @@ private:
                 << ",spells=" << spellCount
                 << ",cooldowns=" << cooldownCount
                 << ",auras=" << auraCount
-                << ",skills=" << skillIds.size()
+                << ",skills=" << skillCount
                 << ",reputations=" << reputationCount
                 << ",mails=" << mailCount
                 << ",items=" << itemCount;
         fingerprint.summary = summary.str();
+        fingerprint.CalculateHash();
         return fingerprint;
     }
 
@@ -2015,6 +2115,7 @@ private:
     bool _creating = false;
     bool _loading = false;
     bool _initializing = false;
+    bool _baselineReloadPending = false;
     uint32 _initializationElapsed = 0;
     uint32 _initializationRetryElapsed = 0;
     uint32 _provisionElapsed = 0;
@@ -2164,6 +2265,28 @@ class SelfTestSuite final : public Suite
 public:
     void Start(Context& context) override
     {
+        Fingerprint expected;
+        expected.fields.emplace("spells.133.active", 1);
+        expected.fields.emplace("health.current", 100);
+        expected.CalculateHash();
+        Fingerprint reordered;
+        reordered.fields.emplace("health.current", 100);
+        reordered.fields.emplace("spells.133.active", 1);
+        reordered.CalculateHash();
+        context.Expect(expected == reordered && expected.value == reordered.value,
+            "rollback fingerprints ignore collection insertion order");
+        reordered.fields["health.current"] = 99;
+        context.Expect(!(expected == reordered),
+            "rollback fingerprints reject changed state");
+        reordered.fields["health.current"] = 100;
+        reordered.fields.erase("spells.133.active");
+        context.Expect(!(expected == reordered),
+            "rollback fingerprints reject missing state");
+        reordered.fields.emplace("spells.133.active", 1);
+        reordered.fields.emplace("spells.116.active", 1);
+        context.Expect(!(expected == reordered),
+            "rollback fingerprints reject added state");
+
         Player* actor = context.GetActor();
         context.Expect(actor != nullptr, "headless actor available");
         if (!actor)

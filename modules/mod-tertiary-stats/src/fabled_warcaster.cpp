@@ -67,7 +67,7 @@ public:
         if (!_hadChannelSpell)
             actor->learnSpell(TEST_CHANNEL_SPELL, true);
 
-        _equipped = Test::EquipFabled(actor, Effect::Warcaster) != nullptr;
+        _equipped = Test::EquipFabled(context, actor, Effect::Warcaster) != nullptr;
         context.Expect(_equipped, "Warcaster trinket equipped");
 
         Creature* dummy = context.SpawnDummy();
@@ -216,7 +216,7 @@ private:
 
         actor->InterruptNonMeleeSpells(true);
         Test::SetMoving(actor, false);
-        Test::UnequipFabled(actor, Effect::Warcaster);
+        Test::UnequipFabled(context, actor, Effect::Warcaster);
         _equipped = false;
         context.ClearEvents();
         _stage = Stage::AwaitControlReady;
@@ -286,7 +286,7 @@ private:
             Test::SetMoving(actor, false);
             actor->InterruptNonMeleeSpells(true);
             if (_equipped)
-                Test::UnequipFabled(actor, Effect::Warcaster);
+                Test::UnequipFabled(context, actor, Effect::Warcaster);
             if (!_hadCastSpell)
                 actor->removeSpell(TEST_CAST_SPELL, SPEC_MASK_ALL, true);
             if (!_hadChannelSpell)

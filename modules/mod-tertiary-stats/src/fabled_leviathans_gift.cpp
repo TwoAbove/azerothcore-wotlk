@@ -92,7 +92,7 @@ public:
         actor->RemoveAurasDueToSpell(SPELL_LEVIATHAN_PASSIVE);
         _baseSwimRate = actor->GetSpeedRate(MOVE_SWIM);
 
-        _equipped = Test::EquipFabled(actor, Effect::LeviathansGift) != nullptr;
+        _equipped = Test::EquipFabled(context, actor, Effect::LeviathansGift) != nullptr;
         context.Expect(_equipped, "Leviathan's Gift trinket equips");
         if (!_equipped)
         {
@@ -170,7 +170,7 @@ public:
         {
             context.Expect(actor->HasAura(SPELL_LEVIATHAN_PASSIVE),
                 "Leviathan's Gift reapplies after resurrection");
-            Test::UnequipFabled(actor, Effect::LeviathansGift);
+            Test::UnequipFabled(context, actor, Effect::LeviathansGift);
             _equipped = false;
             _stage = Stage::CheckUnequipped;
             _elapsed = 0;
@@ -211,7 +211,7 @@ private:
 
         if (_equipped)
             if (Player* actor = context.GetActor())
-                Test::UnequipFabled(actor, Effect::LeviathansGift);
+                Test::UnequipFabled(context, actor, Effect::LeviathansGift);
         _equipped = false;
 
         context.DespawnAllDummies();

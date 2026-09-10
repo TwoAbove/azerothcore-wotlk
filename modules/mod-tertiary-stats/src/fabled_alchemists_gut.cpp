@@ -118,7 +118,7 @@ public:
         TestSettings(actor).toxicityPctPerTick = 5.0f;
         TestSettings(actor).toxicityDurationMs = 30000;
 
-        _equipped = Test::EquipFabled(actor, Effect::AlchemistsGut) != nullptr;
+        _equipped = Test::EquipFabled(context, actor, Effect::AlchemistsGut) != nullptr;
         context.Expect(_equipped, "Alchemist's Gut trinket equipped");
         if (!_equipped || !Has(GetRuntime(actor), Effect::AlchemistsGut))
         {
@@ -314,7 +314,7 @@ private:
         if (Player* actor = context.GetActor())
         {
             if (_equipped)
-                Test::UnequipFabled(actor, Effect::AlchemistsGut);
+                Test::UnequipFabled(context, actor, Effect::AlchemistsGut);
             actor->RemoveAurasDueToSpell(SPELL_TOXICITY);
             _equipped = false;
             actor->SetLastPotionId(0);

@@ -76,7 +76,7 @@ public:
             return;
         }
 
-        _equipped = Test::EquipFabled(actor, Effect::Premonition) != nullptr;
+        _equipped = Test::EquipFabled(context, actor, Effect::Premonition) != nullptr;
         context.Expect(_equipped, "Premonition trinket equipped");
         if (!_equipped)
         {
@@ -163,7 +163,7 @@ public:
         context.Expect(actor->HasAura(SPELL_PREMONITION_AURA),
             "window is active before unequipping");
 
-        Test::UnequipFabled(actor, Effect::Premonition);
+        Test::UnequipFabled(context, actor, Effect::Premonition);
         _equipped = false;
         context.Expect(!actor->HasAura(SPELL_PREMONITION_AURA),
             "unequipping Premonition removes its window aura");
@@ -179,7 +179,7 @@ private:
         if (Player* actor = context.GetActor())
         {
             if (_equipped)
-                Test::UnequipFabled(actor, Effect::Premonition);
+                Test::UnequipFabled(context, actor, Effect::Premonition);
             else
                 actor->RemoveAurasDueToSpell(SPELL_PREMONITION_AURA);
         }
@@ -239,7 +239,7 @@ public:
             "a partial power discount cannot round an indivisible rune cost down to zero");
         actor->RemoveAurasDueToSpell(SPELL_PREMONITION_AURA);
 
-        _equipped = Test::EquipFabled(actor, Effect::Premonition) != nullptr;
+        _equipped = Test::EquipFabled(context, actor, Effect::Premonition) != nullptr;
         Creature* eligible = context.SpawnDummy();
         context.Expect(_equipped && eligible, "rune-test trinket and eligible target are available");
         if (!_equipped || !eligible)
@@ -293,7 +293,7 @@ private:
                 actor->SetPower(POWER_RUNIC_POWER, _runicPower);
             }
             if (_equipped)
-                Test::UnequipFabled(actor, Effect::Premonition);
+                Test::UnequipFabled(context, actor, Effect::Premonition);
             actor->RemoveAurasDueToSpell(SPELL_PREMONITION_AURA);
         }
         _saved = false;

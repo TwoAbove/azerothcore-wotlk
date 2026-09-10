@@ -130,8 +130,8 @@ public:
         TestSettings(actor).ghostwalkSpeedPct = 40.0f;
 
         context.DespawnAllDummies();
-        Test::UnequipFabled(actor, Effect::Ghostwalk);
-        _equipped = Test::EquipFabled(actor, Effect::Ghostwalk) != nullptr;
+        Test::UnequipFabled(context, actor, Effect::Ghostwalk);
+        _equipped = Test::EquipFabled(context, actor, Effect::Ghostwalk) != nullptr;
         context.Expect(_equipped, "Ghostwalk fabled trinket equips");
         if (!_equipped)
         {
@@ -257,7 +257,7 @@ private:
         if (Player* actor = context.GetActor())
         {
             if (_equipped)
-                Test::UnequipFabled(actor, Effect::Ghostwalk);
+                Test::UnequipFabled(context, actor, Effect::Ghostwalk);
             else
                 actor->RemoveAurasDueToSpell(SPELL_GHOSTWALK_AURA);
         }

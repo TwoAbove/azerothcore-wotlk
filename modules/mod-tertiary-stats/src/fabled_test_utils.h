@@ -10,6 +10,7 @@
 
 #include "Item.h"
 #include "Player.h"
+#include "ScriptMgr.h"
 #include "test_harness.h"
 
 #include <string>
@@ -48,11 +49,16 @@ inline Equipment EquipmentFor(Effect effect)
     }
 }
 
-inline Item* EquipFabled(Player* player, Effect effect)
+inline Item* EquipFabled(TestHarness::Context& context, Player* player, Effect effect)
 {
     Equipment equipment = EquipmentFor(effect);
-    if (!player || !equipment.itemEntry)
+    bool ready = player && player->IsInWorld() && player->IsAlive()
+        && !player->IsInCombat() && IsReady() && equipment.itemEntry;
+    context.Expect(ready, "Fabled fixture requires a live, in-world, out-of-combat actor and ready catalog");
+    if (!ready)
         return nullptr;
+
+    bool alreadyLearned = IsUnlocked(player, effect);
 
     player->DestroyItem(INVENTORY_SLOT_BAG_0, equipment.slot, true);
     Item* item = Item::CreateItem(equipment.itemEntry, 1, player, false, 0, false,
@@ -65,26 +71,50 @@ inline Item* EquipFabled(Player* player, Effect effect)
     if (!item)
         return nullptr;
 
-    std::string message;
-    LearnFromEquippedItem(player, item, equipment.slot, message);
-    if (AttunedEffect(player, equipment.slot) != effect
-        && !SetAttunement(player, effect, equipment.slot, message))
+    // First discovery must learn and auto-attune through Player::EquipItem's
+    // registered hook. Only a previously learned memory needs a client request.
+    bool learned = IsUnlocked(player, effect);
+    context.Expect(learned, "equipping the memory learns its Fabled effect", Name(effect));
+    if (!learned)
         return nullptr;
-
-    Runtime& runtime = GetRuntime(player);
-    SetMask(player, uint16(runtime.mask | EffectBit(effect)));
+    if (alreadyLearned && AttunedEffect(player, equipment.slot) != effect)
+    {
+        std::string request = "TStats\tV3:A:" + std::to_string(uint8(effect))
+            + ":" + std::to_string(equipment.slot + 1);
+        sScriptMgr->OnPlayerCanUseChat(player, CHAT_MSG_WHISPER, LANG_ADDON, request, player);
+    }
+    sScriptMgr->OnPlayerUpdate(player, 0);
+    bool active = player->GetItemByPos(INVENTORY_SLOT_BAG_0, equipment.slot) == item
+        && AttunedEffect(player, equipment.slot) == effect && Has(GetRuntime(player), effect);
+    context.Expect(active, "equipped Fabled memory is attuned and active through registered hooks", Name(effect));
+    if (!active)
+        return nullptr;
     return item;
 }
 
-inline void UnequipFabled(Player* player, Effect effect)
+inline void UnequipFabled(TestHarness::Context& context, Player* player, Effect effect)
 {
     Equipment equipment = EquipmentFor(effect);
     if (!player || !equipment.itemEntry)
         return;
 
+    bool learned = IsUnlocked(player, effect);
+    // Teardown ends combat before the same out-of-combat clear request a client
+    // uses. DestroyItem alone does not dispatch OnPlayerUnequip.
+    player->CombatStop(true);
     player->DestroyItem(INVENTORY_SLOT_BAG_0, equipment.slot, true);
-    Runtime& runtime = GetRuntime(player);
-    SetMask(player, uint16(runtime.mask & ~EffectBit(effect)));
+    if (AttunedEffect(player, equipment.slot) != Effect::None)
+    {
+        std::string request = "TStats\tV3:A:0:" + std::to_string(equipment.slot + 1);
+        sScriptMgr->OnPlayerCanUseChat(player, CHAT_MSG_WHISPER, LANG_ADDON, request, player);
+    }
+    sScriptMgr->OnPlayerUpdate(player, 0);
+    context.Expect(!player->GetItemByPos(INVENTORY_SLOT_BAG_0, equipment.slot)
+            && AttunedEffect(player, equipment.slot) == Effect::None
+            && !Has(GetRuntime(player), effect),
+        "removing and clearing Fabled equipment deactivates it through registered hooks", Name(effect));
+    context.Expect(IsUnlocked(player, effect) == learned,
+        "clearing a Fabled attunement preserves its learned memory", Name(effect));
 }
 
 // Mark the actor as moving for the server-side movement checks
